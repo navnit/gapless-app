@@ -1,0 +1,10 @@
+.superpowers/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+coverage/
+*.iml
+.idea/
+.DS_Store
