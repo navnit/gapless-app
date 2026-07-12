@@ -1,4 +1,4 @@
-# Desilence Desktop Application Design
+# Gapless Desktop Application Design
 
 **Status:** Approved
 
@@ -10,11 +10,11 @@
 
 ## 1. Summary
 
-Desilence is a free and open-source desktop application that gives beginners a visual workflow for Auto-Editor. A user opens one local video, lets the bundled Auto-Editor engine detect inactive sections, reviews those decisions on a waveform timeline, manually changes any segment between keep and remove, saves the project automatically, and exports a finished MP4.
+Gapless is a free and open-source desktop application that gives beginners a visual workflow for Auto-Editor. A user opens one local video, lets the bundled Auto-Editor engine detect inactive sections, reviews those decisions on a waveform timeline, manually changes any segment between keep and remove, saves the project automatically, and exports a finished MP4.
 
 The application uses Flutter for its cross-platform interface, `media_kit`/libmpv for playback, and a version-pinned Auto-Editor executable for analysis and rendering. The user interface never constructs raw command lines. A typed engine adapter isolates upstream command and timeline changes from the rest of the application.
 
-The working product name is **Desilence**. The approved visual reference uses the name **Gapless**; its product name is not part of the design contract. Its Studio layout, interaction model, visual hierarchy, themes, amber accent, timeline, and export states are the visual source of truth.
+The product name is **Gapless**. The approved Gapless UX package supplies the Studio layout, interaction model, visual hierarchy, themes, amber accent, timeline, and export states that form the visual source of truth.
 
 ## 2. Goals
 
@@ -49,7 +49,7 @@ The working product name is **Desilence**. The approved visual reference uses th
 | Playback | `media_kit` backed by libmpv |
 | Processing | Bundled, version-pinned Auto-Editor executable |
 | Project scope | One local video per project |
-| Project persistence | Relocatable `.desilence` JSON plus crash-safe autosave |
+| Project persistence | Relocatable `.gapless` JSON plus crash-safe autosave |
 | Timeline editing | Click segments to toggle keep/remove |
 | Export | Finished MP4 only |
 | Core connectivity | Fully offline |
@@ -78,7 +78,7 @@ The reference UX is adapted in these ways:
 - The toolbar shows `Saving…`, `Saved`, or an actionable save error.
 - The File menu provides New, Open Project, Open Video, Save, Save As, and Recent Projects.
 - First import creates an internal draft without interrupting the user with a save dialog.
-- Save As produces a relocatable `.desilence` project file that references, but does not embed, the source video.
+- Save As produces a relocatable `.gapless` project file that references, but does not embed, the source video.
 - The export dialog contains MP4 destination and optional quality controls, not an export-format list.
 - The status bar prioritizes cut count and duration reduction. The raw Auto-Editor command and logs move into Advanced diagnostics.
 - Manual keep/remove overrides are persisted separately from detected decisions.
@@ -191,7 +191,7 @@ Dependencies point inward. Domain types do not import Flutter, `media_kit`, proc
 
 ### 7.1 Pinned engine policy
 
-Each Desilence release pins one exact Auto-Editor release and ships the matching executable for every release target. Upgrading Auto-Editor requires adapter contract tests to pass before an app release can use the new version.
+Each Gapless release pins one exact Auto-Editor release and ships the matching executable for every release target. Upgrading Auto-Editor requires adapter contract tests to pass before an app release can use the new version.
 
 The app does not search `PATH` or silently substitute a user-installed executable. An Advanced developer setting may support an explicit override in a later release, but it is not part of the MVP.
 
@@ -229,7 +229,7 @@ Auto-Editor v3 is partially stable. The domain model must not expose v3 objects.
 
 ## 8. Project and cache data
 
-### 8.1 `.desilence` project
+### 8.1 `.gapless` project
 
 The project is UTF-8 JSON with a required schema version. Unknown fields are preserved when practical and ignored when reading. Time ranges use integer microseconds in source time to avoid floating-point drift.
 
@@ -338,7 +338,7 @@ Each target is built on its native CI runner and contains the matching Auto-Edit
 
 ### 11.2 Licensing
 
-Desilence is GPL-3.0-or-later. This is the safest default for distributing a libmpv-based application because mpv is GPL by default unless built in its LGPL configuration. Auto-Editor source is public-domain/Unlicense, while its binary artifacts and FFmpeg/libmpv dependencies require per-build license review.
+Gapless is GPL-3.0-or-later. This is the safest default for distributing a libmpv-based application because mpv is GPL by default unless built in its LGPL configuration. Auto-Editor source is public-domain/Unlicense, while its binary artifacts and FFmpeg/libmpv dependencies require per-build license review.
 
 The release process records the exact dependency versions and build flags for every artifact. Codec patent availability is treated separately from copyright license compliance and may affect which encoders are enabled in particular distributions.
 
@@ -415,7 +415,7 @@ The MVP is ready for public release when all of the following are true:
 - Threshold, margin, Cut out, and Fast-forward controls update the effective timeline.
 - Original and Edited playback behave according to the displayed decisions.
 - Every displayed segment can be manually changed between keep and remove.
-- Projects autosave, Save As to `.desilence`, close, reopen, and recover after interruption.
+- Projects autosave, Save As to `.gapless`, close, reopen, and recover after interruption.
 - Export produces a playable MP4 matching the effective displayed timeline.
 - Cancelling analysis or export leaves no misleading success state or corrupt final file.
 - The app passes the defined domain, engine-contract, interface, end-to-end, accessibility, and installed-artifact checks on all release targets.

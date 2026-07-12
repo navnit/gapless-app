@@ -1,8 +1,8 @@
-# Desilence MVP Implementation Plan
+# Gapless MVP Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build and package the approved Desilence MVP: a FOSS Flutter desktop app that opens one local video, analyzes it with bundled Auto-Editor, previews and edits keep/remove segments, autosaves the project, and exports an exact MP4.
+**Goal:** Build and package the approved Gapless MVP: a FOSS Flutter desktop app that opens one local video, analyzes it with bundled Auto-Editor, previews and edits keep/remove segments, autosaves the project, and exports an exact MP4.
 
 **Architecture:** Implement an inward-pointing Flutter architecture: immutable domain types at the center, application coordinators around them, and file/process/playback adapters at the edge. Keep Auto-Editor v3 and command syntax inside one versioned adapter; both Edited preview and MP4 export consume the same app-owned effective timeline.
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- License all Desilence source as GPL-3.0-or-later and include complete third-party notices.
+- License all Gapless source as GPL-3.0-or-later and include complete third-party notices.
 - Target macOS 12+ on Apple Silicon and Intel, Windows 10+ x64, and Linux x64 AppImage.
 - Core import, analysis, playback, project persistence, and export must work offline.
 - Process exactly one local source video per project; do not add batch or multitrack support.
@@ -20,7 +20,7 @@
 - Keep source media read-only and write exports through a partial file followed by promotion.
 - Use integer microseconds for all app-owned source-time ranges.
 - Keep Auto-Editor representations out of domain and presentation libraries.
-- Preserve the approved Gapless Studio UX, with Desilence naming and `.desilence` project files.
+- Preserve the approved Gapless Studio UX, with Gapless naming and `.gapless` project files.
 - Do not add a plugin system, cloud services, telemetry, accounts, automatic updates, or URL import.
 
 ## Planned File Structure
@@ -29,7 +29,7 @@
 lib/
   main.dart                              app entry point
   app/
-    desilence_app.dart                   MaterialApp, theme, top-level routing
+    gapless_app.dart                     MaterialApp, theme, top-level routing
     app_dependencies.dart                production adapter wiring
   core/
     errors/app_failure.dart              typed user-actionable failures
@@ -94,16 +94,16 @@ tool/
 
 **Files:**
 - Create: Flutter-generated `android`-free desktop scaffold in the repository root
-- Create: `LICENSE`
-- Create: `lib/app/desilence_app.dart`
+- Verify: `LICENSE` contains the canonical GPL-3.0 text and README declares GPL-3.0-or-later
+- Create: `lib/app/gapless_app.dart`
 - Create: `lib/app/app_dependencies.dart`
 - Modify: `lib/main.dart`
 - Modify: `pubspec.yaml`
 - Modify: `.gitignore`
-- Test: `test/app/desilence_app_test.dart`
+- Test: `test/app/gapless_app_test.dart`
 
 **Interfaces:**
-- Produces: `DesilenceApp({required AppDependencies dependencies})`
+- Produces: `GaplessApp({required AppDependencies dependencies})`
 - Produces: `AppDependencies.empty()` as the temporary wiring seam used by later tasks
 
 - [ ] **Step 1: Scaffold only desktop platforms without replacing existing docs**
@@ -111,7 +111,7 @@ tool/
 Run:
 
 ```bash
-flutter create --platforms=macos,windows,linux --org org.desilence --project-name desilence .
+flutter create --platforms=macos,windows,linux --org org.gapless --project-name gapless .
 ```
 
 Expected: Flutter creates macOS, Windows, Linux, `lib`, and `test` files while preserving `docs/`. Restore `.superpowers/` in `.gitignore` if Flutter rewrites the file.
@@ -149,20 +149,20 @@ Add the complete GPL-3.0-or-later text to `LICENSE`, then run `flutter pub get` 
 - [ ] **Step 3: Write the failing app-shell test**
 
 ```dart
-testWidgets('shows the Desilence empty workspace', (tester) async {
+testWidgets('shows the Gapless empty workspace', (tester) async {
   await tester.pumpWidget(
-    DesilenceApp(dependencies: AppDependencies.empty()),
+    GaplessApp(dependencies: AppDependencies.empty()),
   );
 
-  expect(find.text('Desilence'), findsOneWidget);
+  expect(find.text('Gapless'), findsOneWidget);
   expect(find.text('Open Video'), findsOneWidget);
   expect(find.text('Drop a video here'), findsOneWidget);
 });
 ```
 
-Run: `flutter test test/app/desilence_app_test.dart`
+Run: `flutter test test/app/gapless_app_test.dart`
 
-Expected: FAIL because `DesilenceApp` and `AppDependencies` do not exist.
+Expected: FAIL because `GaplessApp` and `AppDependencies` do not exist.
 
 - [ ] **Step 4: Implement the minimal production entry and empty Studio shell**
 
@@ -171,20 +171,20 @@ final class AppDependencies {
   const AppDependencies.empty();
 }
 
-final class DesilenceApp extends StatelessWidget {
-  const DesilenceApp({required this.dependencies, super.key});
+final class GaplessApp extends StatelessWidget {
+  const GaplessApp({required this.dependencies, super.key});
   final AppDependencies dependencies;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'Desilence',
+        title: 'Gapless',
         debugShowCheckedModeBanner: false,
         themeMode: ThemeMode.system,
         home: const Scaffold(
           body: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: [Text('Desilence'), Text('Drop a video here'), Text('Open Video')],
+              children: [Text('Gapless'), Text('Drop a video here'), Text('Open Video')],
             ),
           ),
         ),
@@ -360,7 +360,7 @@ git commit -m "feat: add normalized editing timeline domain"
 - Test: `test/features/project/data/project_codec_test.dart`
 - Test: `test/features/project/data/project_repository_test.dart`
 - Test: `test/features/project/application/autosave_controller_test.dart`
-- Test fixture: `test/fixtures/projects/v1_audio_cut.desilence`
+- Test fixture: `test/fixtures/projects/v1_audio_cut.gapless`
 
 **Interfaces:**
 - Consumes: Task 2 domain types
@@ -371,7 +371,7 @@ git commit -m "feat: add normalized editing timeline domain"
 
 ```dart
 test('round trips v1 without losing source-time decisions', () {
-  final decoded = ProjectCodec().decode(fixture('v1_audio_cut.desilence'));
+  final decoded = ProjectCodec().decode(fixture('v1_audio_cut.gapless'));
   final encoded = ProjectCodec().encode(decoded);
   final again = ProjectCodec().decode(encoded);
   expect(again, decoded);
@@ -999,7 +999,7 @@ Serialize position reactions so repeated events do not race. In Original mode al
 
 - [ ] **Step 4: Implement the media_kit adapter**
 
-Own one `Player` and `VideoController`. Convert `Duration` to integer microseconds. Configure local-file playback, hardware decoding, no network protocols beyond `file`, and custom controls disabled because Desilence renders its own transport row. Dispose every stream subscription.
+Own one `Player` and `VideoController`. Convert `Duration` to integer microseconds. Configure local-file playback, hardware decoding, no network protocols beyond `file`, and custom controls disabled because Gapless renders its own transport row. Dispose every stream subscription.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -1100,7 +1100,7 @@ git commit -m "feat: add editable waveform timeline"
 - Create: `assets/fonts/InstrumentSans-VariableFont_wdth,wght.ttf`
 - Create: `assets/fonts/OFL.txt`
 - Create: `assets/fonts/SHA256SUMS`
-- Modify: `lib/app/desilence_app.dart`
+- Modify: `lib/app/gapless_app.dart`
 - Modify: `lib/app/app_dependencies.dart`
 - Modify: `pubspec.yaml`
 - Test: `test/features/editor/presentation/editor_screen_test.dart`
@@ -1152,7 +1152,7 @@ Use `file_selector` with a broad media filter, then let Auto-Editor validate sup
 
 - [ ] **Step 4: Wire controls, undo/redo, Save As, and Recent Projects**
 
-Threshold changes debounce analysis; manual segment toggles do not re-run the engine. Save As uses a `.desilence` extension. Store recent project URIs in a small versioned JSON preferences file, remove inaccessible entries lazily, and never delete project files from the Recent menu.
+Threshold changes debounce analysis; manual segment toggles do not re-run the engine. Save As uses a `.gapless` extension. Store recent project URIs in a small versioned JSON preferences file, remove inaccessible entries lazily, and never delete project files from the Recent menu.
 
 Implement an application-command stack containing settings changes and manual overrides. File import/export is excluded from undo.
 
@@ -1174,7 +1174,7 @@ Commit:
 
 ```bash
 git add lib/app lib/features/editor test/app test/features/editor test/goldens
-git commit -m "feat: assemble Desilence Studio workflow"
+git commit -m "feat: assemble Gapless Studio workflow"
 ```
 
 ---
@@ -1316,7 +1316,7 @@ abstract final class FailurePresenter {
           ),
         OperationCancelled() => throw StateError('Cancellation is handled as a ready state'),
         _ => const FailurePresentation(
-            title: 'Desilence could not finish this operation',
+            title: 'Gapless could not finish this operation',
             body: 'Your project is safe. Retry or copy diagnostics for more detail.',
             primaryAction: FailureAction.retry,
             secondaryAction: FailureAction.copyDiagnostics,
@@ -1384,9 +1384,9 @@ git commit -m "test: cover recovery accessibility and editor workflow"
 - Create: `.github/workflows/verify.yml`
 - Create: `.github/workflows/release.yml`
 - Create: `packaging/macos/package_dmg.sh`
-- Create: `packaging/windows/desilence.iss`
+- Create: `packaging/windows/gapless.iss`
 - Create: `packaging/linux/AppRun`
-- Create: `packaging/linux/desilence.desktop`
+- Create: `packaging/linux/gapless.desktop`
 - Create: `packaging/linux/package_appimage.sh`
 - Modify: `macos/Runner.xcodeproj/project.pbxproj` for nested engine copy/signing
 - Modify: `windows/CMakeLists.txt` for engine installation
@@ -1411,13 +1411,13 @@ test('release bundle contains the exact executable and notices', () async {
 
 - [ ] **Step 2: Install engine binaries at deterministic native paths**
 
-- macOS: `Desilence.app/Contents/Resources/engine/auto-editor`; preserve executable mode, sign the nested Mach-O before signing the app, then notarize/staple.
-- Windows: `%ProgramFiles%\Desilence\engine\auto-editor.exe`; include it in the installer manifest and sign both engine/app artifacts as required.
-- Linux AppImage: `usr/lib/desilence/engine/auto-editor`; include compatible libmpv runtime libraries and record their licenses.
+- macOS: `Gapless.app/Contents/Resources/engine/auto-editor`; preserve executable mode, sign the nested Mach-O before signing the app, then notarize/staple.
+- Windows: `%ProgramFiles%\Gapless\engine\auto-editor.exe`; include it in the installer manifest and sign both engine/app artifacts as required.
+- Linux AppImage: `usr/lib/gapless/engine/auto-editor`; include compatible libmpv runtime libraries and record their licenses.
 
 Update `AutoEditorLocator` tests to use these exact paths relative to `Platform.resolvedExecutable`.
 
-Use built-in `hdiutil` in `package_dmg.sh`, Inno Setup 6 through `ISCC.exe` with `desilence.iss`, and `appimagetool` with the explicit AppDir assembled by `package_appimage.sh`. Store the chosen Inno Setup and appimagetool versions plus download SHA-256 values in `tool/release/tool_manifest.json`; the release scripts refuse tools that do not match that committed manifest.
+Use built-in `hdiutil` in `package_dmg.sh`, Inno Setup 6 through `ISCC.exe` with `gapless.iss`, and `appimagetool` with the explicit AppDir assembled by `package_appimage.sh`. Store the chosen Inno Setup and appimagetool versions plus download SHA-256 values in `tool/release/tool_manifest.json`; the release scripts refuse tools that do not match that committed manifest.
 
 - [ ] **Step 3: Add verification CI**
 
@@ -1443,7 +1443,7 @@ Then run the platform-specific bundle check:
 ```bash
 # macOS runner
 flutter build macos --release
-dart run tool/release/verify_bundle.dart --bundle build/macos/Build/Products/Release/Desilence.app
+dart run tool/release/verify_bundle.dart --bundle build/macos/Build/Products/Release/Gapless.app
 
 # Windows runner (PowerShell)
 flutter build windows --release
@@ -1483,7 +1483,7 @@ Run the native integration and bundle gate on its matching OS:
 # macOS
 flutter test integration_test -d macos
 flutter build macos --release
-dart run tool/release/verify_bundle.dart --bundle build/macos/Build/Products/Release/Desilence.app
+dart run tool/release/verify_bundle.dart --bundle build/macos/Build/Products/Release/Gapless.app
 
 # Windows (PowerShell)
 flutter test integration_test -d windows
