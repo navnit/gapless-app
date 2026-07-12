@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "appVersion": "0.1.0",
+  "source": {
+    "relativePath": "media/interview.mp4",
+    "absolutePath": "/Users/example/media/interview.mp4",
+    "size": 123456789,
+    "modifiedAt": "2026-07-11T12:00:00.000Z",
+    "fingerprint": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "settings": {
+    "method": "audio",
+    "thresholdDb": -19.0,
+    "marginBeforeUs": 200000,
+    "marginAfterUs": 200000,
+    "inactiveAction": "cut",
+    "fastForwardRate": 4.0
+  },
+  "detectedSegments": [
+    {
+      "startUs": 0,
+      "endUs": 2000000,
+      "action": "keep",
+      "rate": 1.0
+    },
+    {
+      "startUs": 2000000,
+      "endUs": 3500000,
+      "action": "cut",
+      "rate": 1.0
+    }
+  ],
+  "manualOverrides": [
+    {
+      "startUs": 2250000,
+      "endUs": 2750000,
+      "action": "keep",
+      "rate": 1.0
+    }
+  ],
+  "ui": {
+    "previewMode": "edited",
+    "timelineZoom": 1.0,
+    "sidebarWidth": 264.0,
+    "waveformHeight": 52.0
+  }
+}

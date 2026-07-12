@@ -16,4 +16,16 @@ final class TimelineSegment {
   final SegmentAction action;
   final double rate;
   final SegmentOrigin origin;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TimelineSegment &&
+          range == other.range &&
+          action == other.action &&
+          rate == other.rate &&
+          origin == other.origin;
+
+  @override
+  int get hashCode => Object.hash(range, action, rate, origin);
 }

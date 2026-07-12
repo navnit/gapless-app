@@ -18,4 +18,25 @@ final class AnalysisSettings {
   final int marginAfterUs;
   final InactiveBehavior inactiveBehavior;
   final double fastForwardRate;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AnalysisSettings &&
+          method == other.method &&
+          thresholdDb == other.thresholdDb &&
+          marginBeforeUs == other.marginBeforeUs &&
+          marginAfterUs == other.marginAfterUs &&
+          inactiveBehavior == other.inactiveBehavior &&
+          fastForwardRate == other.fastForwardRate;
+
+  @override
+  int get hashCode => Object.hash(
+    method,
+    thresholdDb,
+    marginBeforeUs,
+    marginAfterUs,
+    inactiveBehavior,
+    fastForwardRate,
+  );
 }
