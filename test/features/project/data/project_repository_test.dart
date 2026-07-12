@@ -66,6 +66,68 @@ void main() {
       expect(RegExp(r'\.tmp-[0-9a-f]{32}$').hasMatch(temporary.path), isTrue);
     });
 
+    test('wraps random temp-name generation failures', () async {
+      final fs = FakeProjectFileSystem();
+      final repository = _repository(fs, randomBytes: ThrowingRandomBytes());
+
+      await expectLater(
+        repository.saveAtomic(path, oldProject),
+        throwsA(
+          isA<ProjectSaveFailure>().having(
+            (failure) => failure.cause,
+            'cause',
+            isA<StateError>(),
+          ),
+        ),
+      );
+    });
+
+    test('reserves a unique temp name and retries collisions', () async {
+      final fs = FakeProjectFileSystem();
+      final collided = Uri.file(
+        '/projects/edit.gapless.tmp-000102030405060708090a0b0c0d0e0f',
+      );
+      fs.seed(collided, [99]);
+      final repository = _repository(fs, randomBytes: SequenceRandomBytes());
+
+      await repository.saveAtomic(path, oldProject);
+
+      expect(fs.bytes(collided), [99]);
+      expect(fs.exclusiveReservations, [
+        collided,
+        Uri.file('/projects/edit.gapless.tmp-101112131415161718191a1b1c1d1e1f'),
+      ]);
+      expect(
+        fs.written.single.path,
+        '/projects/edit.gapless.tmp-101112131415161718191a1b1c1d1e1f',
+      );
+    });
+
+    test('deletes a stale previous when target does not exist', () async {
+      final fs = FakeProjectFileSystem();
+      fs.seed(_previous(path), utf8.encode(ProjectCodec().encode(newProject)));
+
+      await _repository(fs).saveAtomic(path, oldProject);
+
+      expect(await fs.exists(_previous(path)), isFalse);
+      expect(await _repository(fs).load(path), oldProject);
+    });
+
+    test('preserves original revision time when copying previous', () async {
+      final originalTime = DateTime.utc(2026, 1, 1);
+      final fs = FakeProjectFileSystem(copiedAtUtc: DateTime.utc(2026, 1, 10));
+      fs.seed(
+        path,
+        utf8.encode(ProjectCodec().encode(oldProject)),
+        modifiedAtUtc: originalTime,
+      );
+
+      await _repository(fs).saveAtomic(path, newProject);
+
+      expect(await fs.modifiedAtUtc(_previous(path)), originalTime);
+      expect((await _repository(fs).recoveryFor(path))?.uri, path);
+    });
+
     test('recovery selects the newest readable revision', () async {
       final fs = FakeProjectFileSystem();
       final repository = _repository(fs);
@@ -102,6 +164,26 @@ void main() {
       );
 
       expect((await repository.recoveryFor(path))?.uri, path);
+    });
+
+    test('recovery deterministically prefers target on equal times', () async {
+      final fs = FakeProjectFileSystem();
+      final sameTime = DateTime.utc(2026, 1, 1);
+      fs.seed(
+        path,
+        utf8.encode(ProjectCodec().encode(newProject)),
+        modifiedAtUtc: sameTime,
+      );
+      fs.seed(
+        _previous(path),
+        utf8.encode(ProjectCodec().encode(oldProject)),
+        modifiedAtUtc: sameTime,
+      );
+
+      final recovery = await _repository(fs).recoveryFor(path);
+
+      expect(recovery?.uri, path);
+      expect(recovery?.document, newProject);
     });
   });
 
@@ -191,6 +273,49 @@ void main() {
       expect(resolved, isNull);
     });
 
+    test(
+      'candidate-local fingerprint error still tries absolute path',
+      () async {
+        final fs = FakeProjectFileSystem();
+        final relative = Uri.file('/projects/media/interview.mp4');
+        final absolute = Uri.file('/original/interview.mp4');
+        fs.seed(relative, [1]);
+        fs.seed(absolute, [2]);
+        final fingerprinter = FakeFingerprinter({
+          relative: StateError('relative file disappeared'),
+          absolute: _sameFingerprint(oldProject, modifiedDay: 14),
+        });
+
+        final resolved = await _repository(
+          fs,
+          fingerprinter: fingerprinter,
+        ).resolveSource(path, oldProject.source);
+
+        expect(resolved, absolute);
+        expect(fingerprinter.calls, [relative, absolute]);
+      },
+    );
+
+    test('candidate-local exists error still tries absolute path', () async {
+      final relative = Uri.file('/projects/media/interview.mp4');
+      final absolute = Uri.file('/original/interview.mp4');
+      final fs = FakeProjectFileSystem(
+        existsFailures: {relative: StateError('relative stat failed')},
+      );
+      fs.seed(absolute, [2]);
+      final fingerprinter = FakeFingerprinter({
+        absolute: _sameFingerprint(oldProject, modifiedDay: 14),
+      });
+
+      final resolved = await _repository(
+        fs,
+        fingerprinter: fingerprinter,
+      ).resolveSource(path, oldProject.source);
+
+      expect(resolved, absolute);
+      expect(fingerprinter.calls, [absolute]);
+    });
+
     test('size and sampled SHA identity ignores mtime-only changes', () {
       final stored = oldProject.source.fingerprint;
       final copied = _sameFingerprint(oldProject, modifiedDay: 31);
@@ -218,16 +343,60 @@ void main() {
       expect(result.size, 1000);
       expect(result.sampledSha256, matches(RegExp(r'^[0-9a-f]{64}$')));
     });
+
+    test(
+      'uses stable framed digests for empty through large sources',
+      () async {
+        final cases = <(int, List<(int, int)>, String)>[
+          (
+            0,
+            const [],
+            '374708fff7719dd5979ec875d56cd2286f6d3cf7ec317a3b25632aab28ec37bb',
+          ),
+          (
+            3,
+            const [(0, 3)],
+            'b5ba34507d93f976355e681f92dd9f9aca2d28f1184a01afd02dde23a58a9cbe',
+          ),
+          (
+            6,
+            const [(0, 4), (1, 4), (2, 4)],
+            'a55da341f8a482bcee618ecbf6a141ce878d0747fc2d34501a9e794f50309706',
+          ),
+          (
+            12,
+            const [(0, 4), (4, 4), (8, 4)],
+            '2490f4e3b59dea45ea414ff442168e9ad89a40a15c72a390636c50a91bd66416',
+          ),
+        ];
+
+        for (final (size, reads, digest) in cases) {
+          final reader = FakeSourceSampleReader(
+            size: size,
+            modifiedAtUtc: DateTime.utc(2026, 1, 1),
+          );
+
+          final result = await SampledSourceFingerprinter(
+            reader: reader,
+            sampleSize: 4,
+          ).fingerprint(Uri.file('/source-$size.mp4'));
+
+          expect(reader.reads, reads, reason: 'sample reads for size $size');
+          expect(result.sampledSha256, digest, reason: 'digest for size $size');
+        }
+      },
+    );
   });
 }
 
 ProjectRepository _repository(
   FakeProjectFileSystem fs, {
   SourceFingerprinter? fingerprinter,
+  RandomBytes? randomBytes,
 }) => ProjectRepository(
   fileSystem: fs,
   fingerprinter: fingerprinter ?? FakeFingerprinter(const {}),
-  randomBytes: FixedRandomBytes(),
+  randomBytes: randomBytes ?? FixedRandomBytes(),
 );
 
 SourceFingerprint _sameFingerprint(
@@ -248,16 +417,33 @@ final class FixedRandomBytes implements RandomBytes {
   List<int> nextBytes(int length) => List.generate(length, (index) => index);
 }
 
+final class ThrowingRandomBytes implements RandomBytes {
+  @override
+  List<int> nextBytes(int length) => throw StateError('random unavailable');
+}
+
+final class SequenceRandomBytes implements RandomBytes {
+  var _call = 0;
+
+  @override
+  List<int> nextBytes(int length) {
+    final start = _call++ * length;
+    return List.generate(length, (index) => start + index);
+  }
+}
+
 final class FakeFingerprinter implements SourceFingerprinter {
   FakeFingerprinter(this.results);
 
-  final Map<Uri, SourceFingerprint> results;
+  final Map<Uri, Object> results;
   final List<Uri> calls = [];
 
   @override
   Future<SourceFingerprint> fingerprint(Uri source) async {
     calls.add(source);
-    return results[source]!;
+    final result = results[source]!;
+    if (result is SourceFingerprint) return result;
+    throw result;
   }
 }
 
@@ -280,12 +466,19 @@ final class FakeSourceSampleReader implements SourceSampleReader {
 }
 
 final class FakeProjectFileSystem implements ProjectFileSystem {
-  FakeProjectFileSystem({this.failOnPromote = false});
+  FakeProjectFileSystem({
+    this.failOnPromote = false,
+    this.copiedAtUtc,
+    this.existsFailures = const {},
+  });
 
   final bool failOnPromote;
+  final DateTime? copiedAtUtc;
+  final Map<Uri, Object> existsFailures;
   final Map<Uri, Uint8List> _files = {};
   final Map<Uri, DateTime> _modified = {};
   final List<Uri> written = [];
+  final List<Uri> exclusiveReservations = [];
 
   Iterable<Uri> get uris => _files.keys;
   List<int> bytes(Uri uri) => _files[uri]!;
@@ -297,7 +490,15 @@ final class FakeProjectFileSystem implements ProjectFileSystem {
 
   @override
   Future<void> copy(Uri from, Uri to) async {
-    seed(to, _files[from]!, modifiedAtUtc: _modified[from]);
+    seed(to, _files[from]!, modifiedAtUtc: copiedAtUtc ?? _modified[from]);
+  }
+
+  @override
+  Future<bool> createExclusive(Uri file) async {
+    exclusiveReservations.add(file);
+    if (_files.containsKey(file)) return false;
+    seed(file, const []);
+    return true;
   }
 
   @override
@@ -307,10 +508,19 @@ final class FakeProjectFileSystem implements ProjectFileSystem {
   }
 
   @override
-  Future<bool> exists(Uri file) async => _files.containsKey(file);
+  Future<bool> exists(Uri file) async {
+    final failure = existsFailures[file];
+    if (failure != null) throw failure;
+    return _files.containsKey(file);
+  }
 
   @override
   Future<DateTime> modifiedAtUtc(Uri file) async => _modified[file]!;
+
+  @override
+  Future<void> setModifiedAtUtc(Uri file, DateTime modifiedAtUtc) async {
+    _modified[file] = modifiedAtUtc;
+  }
 
   @override
   Future<List<int>> readBytes(Uri file) async => bytes(file);

@@ -49,6 +49,34 @@ void main() {
       );
     });
 
+    test('project document defensively copies segment collections', () {
+      final codec = ProjectCodec();
+      final decoded = codec.decode(validJson);
+      final detected = decoded.detectedSegments.toList();
+      final overrides = decoded.manualOverrides.toList();
+      final document = ProjectDocument(
+        schemaVersion: decoded.schemaVersion,
+        appVersion: decoded.appVersion,
+        source: decoded.source,
+        settings: decoded.settings,
+        detectedSegments: detected,
+        manualOverrides: overrides,
+        ui: decoded.ui,
+      );
+      final expected = codec.decode(codec.encode(document));
+      final hashBeforeMutation = document.hashCode;
+      final jsonBeforeMutation = codec.encode(document);
+
+      detected.clear();
+      overrides.clear();
+
+      expect(document, expected);
+      expect(document.hashCode, hashBeforeMutation);
+      expect(codec.encode(document), jsonBeforeMutation);
+      expect(() => document.detectedSegments.clear(), throwsUnsupportedError);
+      expect(() => document.manualOverrides.clear(), throwsUnsupportedError);
+    });
+
     test('rejects malformed JSON as ProjectFormatFailure', () {
       expect(
         () => ProjectCodec().decode('{'),

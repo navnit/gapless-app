@@ -32,15 +32,16 @@ final class ProjectUiState {
 }
 
 final class ProjectDocument {
-  const ProjectDocument({
+  ProjectDocument({
     required this.schemaVersion,
     required this.appVersion,
     required this.source,
     required this.settings,
-    required this.detectedSegments,
-    required this.manualOverrides,
+    required List<TimelineSegment> detectedSegments,
+    required List<TimelineSegment> manualOverrides,
     required this.ui,
-  });
+  }) : detectedSegments = List.unmodifiable(detectedSegments),
+       manualOverrides = List.unmodifiable(manualOverrides);
 
   static const currentSchemaVersion = 1;
 

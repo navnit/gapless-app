@@ -102,6 +102,122 @@ void main() {
       );
     },
   );
+
+  test('source-list mutation cannot change pending autosave content', () async {
+    final detected = first.detectedSegments.toList();
+    final overrides = first.manualOverrides.toList();
+    final document = ProjectDocument(
+      schemaVersion: first.schemaVersion,
+      appVersion: first.appVersion,
+      source: first.source,
+      settings: first.settings,
+      detectedSegments: detected,
+      manualOverrides: overrides,
+      ui: first.ui,
+    );
+    final store = RecordingProjectStore();
+    final controller = _controller(path, store, clock);
+    controller.markChanged(document);
+
+    detected.clear();
+    overrides.clear();
+    await controller.flush();
+
+    expect(store.saved.single, first);
+  });
+
+  test('newer change can save after an earlier failure', () async {
+    final store = ControlledProjectStore();
+    final controller = _controller(path, store, clock);
+    controller.markChanged(first);
+    final firstFlush = controller.flush();
+    await _pumpAsync();
+    store.failNext(ProjectSaveFailure(path, StateError('disk full')));
+    await firstFlush;
+    expect(controller.status, isA<AutosaveFailed>());
+
+    controller.markChanged(second);
+    final secondFlush = controller.flush();
+    await _pumpAsync();
+    store.completeNext();
+    await secondFlush;
+
+    expect(controller.document, second);
+    expect(controller.status, const AutosaveSaved(2));
+  });
+
+  test('stale failure completion cannot overwrite newer revision', () async {
+    final store = ControlledProjectStore();
+    final controller = _controller(path, store, clock);
+    controller.markChanged(first);
+    clock.elapse(const Duration(seconds: 1));
+    await _pumpAsync();
+
+    controller.markChanged(second);
+    clock.elapse(const Duration(seconds: 1));
+    store.failNext(ProjectSaveFailure(path, StateError('old failure')));
+    await _pumpAsync();
+
+    expect(controller.status, isNot(isA<AutosaveFailed>()));
+    expect(store.started, [first, second]);
+    store.completeNext();
+    await _pumpAsync();
+    expect(controller.status, const AutosaveSaved(2));
+  });
+
+  test('flush queues the current revision behind an older write', () async {
+    final store = ControlledProjectStore();
+    final controller = _controller(path, store, clock);
+    controller.markChanged(first);
+    clock.elapse(const Duration(seconds: 1));
+    await _pumpAsync();
+    controller.markChanged(second);
+
+    final flushed = controller.flush();
+    store.completeNext();
+    await _pumpAsync();
+    expect(store.started, [first, second]);
+    store.completeNext();
+    await flushed;
+
+    expect(controller.status, const AutosaveSaved(2));
+  });
+
+  test('dispose cancels debounce and rejects subsequent work', () async {
+    final store = RecordingProjectStore();
+    final controller = _controller(path, store, clock);
+    controller.markChanged(first);
+
+    await controller.dispose();
+    clock.elapse(const Duration(seconds: 1));
+    await _pumpAsync();
+
+    expect(store.saved, isEmpty);
+    expect(clock.activeTimerCount, 0);
+    expect(controller.status, const AutosaveDisposed());
+    expect(() => controller.markChanged(second), throwsStateError);
+    expect(() => controller.flush(), throwsStateError);
+  });
+
+  test(
+    'dispose awaits in-flight save without post-dispose status changes',
+    () async {
+      final store = ControlledProjectStore();
+      final controller = _controller(path, store, clock);
+      controller.markChanged(first);
+      final flush = controller.flush();
+      await _pumpAsync();
+
+      final dispose = controller.dispose();
+      expect(controller.status, const AutosaveDisposed());
+      store.completeNext();
+      await flush;
+      await dispose;
+
+      expect(controller.status, const AutosaveDisposed());
+      expect(store.started, [first]);
+    },
+  );
 }
 
 AutosaveController _controller(
@@ -189,6 +305,7 @@ final class ControlledProjectStore implements ProjectStore {
   final List<Completer<void>> _pending = [];
 
   void completeNext() => _pending.removeAt(0).complete();
+  void failNext(Object error) => _pending.removeAt(0).completeError(error);
 
   @override
   Future<ProjectDocument> load(Uri project) => throw UnimplementedError();

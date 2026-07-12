@@ -60,6 +60,16 @@ final class AutosaveFailed extends AutosaveStatus {
   int get hashCode => Object.hash(AutosaveFailed, revision, failure);
 }
 
+final class AutosaveDisposed extends AutosaveStatus {
+  const AutosaveDisposed();
+
+  @override
+  bool operator ==(Object other) => other is AutosaveDisposed;
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+}
+
 abstract interface class AutosaveTimer {
   bool get isActive;
   void cancel();
@@ -109,27 +119,40 @@ final class AutosaveController {
   AutosaveStatus get status => _status;
 
   int _revision = 0;
+  bool _disposed = false;
   AutosaveTimer? _timer;
   Future<void> _tail = Future<void>.value();
   final Map<int, Future<void>> _pending = {};
 
   void markChanged(ProjectDocument document) {
+    _ensureActive();
     _document = document;
     _revision += 1;
     _status = const AutosaveIdle();
     _timer?.cancel();
     _timer = clock.schedule(delay, () {
       _timer = null;
+      if (_disposed) return;
       unawaited(_requestSave(_revision, _document!));
     });
   }
 
   Future<void> flush() {
+    _ensureActive();
     _timer?.cancel();
     _timer = null;
     final document = _document;
     if (document == null) return _tail;
     return _requestSave(_revision, document);
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) return _tail;
+    _disposed = true;
+    _timer?.cancel();
+    _timer = null;
+    _status = const AutosaveDisposed();
+    await _tail;
   }
 
   Future<void> _requestSave(int revision, ProjectDocument document) {
@@ -150,20 +173,24 @@ final class AutosaveController {
   }
 
   Future<void> _performSave(int revision, ProjectDocument document) async {
-    if (revision != _revision) return;
+    if (_disposed || revision != _revision) return;
     _status = AutosaveSaving(revision);
     try {
       await store.saveAtomic(project, document);
-      if (revision == _revision) {
+      if (!_disposed && revision == _revision) {
         _status = AutosaveSaved(revision);
       }
     } catch (error) {
-      if (revision == _revision) {
+      if (!_disposed && revision == _revision) {
         _status = AutosaveFailed(
           revision,
           error is AppFailure ? error : ProjectSaveFailure(project, error),
         );
       }
     }
+  }
+
+  void _ensureActive() {
+    if (_disposed) throw StateError('AutosaveController is disposed');
   }
 }

@@ -44,15 +44,14 @@ final class SampledSourceFingerprinter implements SourceFingerprinter {
     }
 
     final blockLength = min(sampleSize, metadata.size);
-    final offsets =
-        blockLength == 0
-              ? const <int>[]
-              : <int>{
-                  0,
-                  (metadata.size - blockLength) ~/ 2,
-                  metadata.size - blockLength,
-                }.toList()
-          ..sort();
+    final offsets = blockLength == 0
+        ? <int>[]
+        : <int>{
+            0,
+            (metadata.size - blockLength) ~/ 2,
+            metadata.size - blockLength,
+          }.toList();
+    offsets.sort();
     final framed = BytesBuilder(copy: false)
       ..add(_int64(metadata.size))
       ..add(_int64(offsets.length));
@@ -103,6 +102,7 @@ final class LocalSourceSampleReader implements SourceSampleReader {
 }
 
 abstract interface class ProjectFileSystem {
+  Future<bool> createExclusive(Uri file);
   Future<List<int>> readBytes(Uri file);
   Future<void> writeAndFlush(Uri file, List<int> bytes);
   Future<void> rename(Uri from, Uri to);
@@ -110,10 +110,23 @@ abstract interface class ProjectFileSystem {
   Future<bool> exists(Uri file);
   Future<void> deleteIfExists(Uri file);
   Future<DateTime> modifiedAtUtc(Uri file);
+  Future<void> setModifiedAtUtc(Uri file, DateTime modifiedAtUtc);
 }
 
 final class LocalProjectFileSystem implements ProjectFileSystem {
   const LocalProjectFileSystem();
+
+  @override
+  Future<bool> createExclusive(Uri file) async {
+    final target = File.fromUri(file);
+    try {
+      await target.create(exclusive: true);
+      return true;
+    } on FileSystemException {
+      if (await target.exists()) return false;
+      rethrow;
+    }
+  }
 
   @override
   Future<void> copy(Uri from, Uri to) =>
@@ -131,6 +144,10 @@ final class LocalProjectFileSystem implements ProjectFileSystem {
   @override
   Future<DateTime> modifiedAtUtc(Uri file) async =>
       (await File.fromUri(file).lastModified()).toUtc();
+
+  @override
+  Future<void> setModifiedAtUtc(Uri file, DateTime modifiedAtUtc) =>
+      File.fromUri(file).setLastModified(modifiedAtUtc.toUtc());
 
   @override
   Future<List<int>> readBytes(Uri file) => File.fromUri(file).readAsBytes();
@@ -202,20 +219,25 @@ final class ProjectRepository implements ProjectStore {
 
   @override
   Future<void> saveAtomic(Uri project, ProjectDocument document) async {
-    final temporary = _temporaryUri(project);
-    final previous = _sibling(project, '.previous');
+    Uri? temporary;
     try {
+      temporary = await _reserveTemporary(project);
+      final previous = _sibling(project, '.previous');
       await _fileSystem.writeAndFlush(
         temporary,
         utf8.encode(_codec.encode(document)),
       );
       if (await _fileSystem.exists(project)) {
+        final previousSavedAt = await _fileSystem.modifiedAtUtc(project);
         await _fileSystem.deleteIfExists(previous);
         await _fileSystem.copy(project, previous);
+        await _fileSystem.setModifiedAtUtc(previous, previousSavedAt);
+      } else {
+        await _fileSystem.deleteIfExists(previous);
       }
       await _fileSystem.rename(temporary, project);
     } catch (error) {
-      await _bestEffortDelete(temporary);
+      if (temporary != null) await _bestEffortDelete(temporary);
       throw ProjectSaveFailure(project, error);
     }
   }
@@ -228,9 +250,13 @@ final class ProjectRepository implements ProjectStore {
     final absolute = Uri.file(source.absolutePath);
 
     for (final candidate in <Uri>{relative, absolute}) {
-      if (!await _fileSystem.exists(candidate)) continue;
-      final actual = await _fingerprinter.fingerprint(candidate);
-      if (source.fingerprint.matches(actual)) return candidate;
+      try {
+        if (!await _fileSystem.exists(candidate)) continue;
+        final actual = await _fingerprinter.fingerprint(candidate);
+        if (source.fingerprint.matches(actual)) return candidate;
+      } on Object {
+        // A single stale or unreadable candidate must not block relocation.
+      }
     }
     return null;
   }
@@ -244,32 +270,41 @@ final class ProjectRepository implements ProjectStore {
 
   @override
   Future<RecoveryCandidate?> recoveryFor(Uri project) async {
-    final candidates = <RecoveryCandidate>[];
-    for (final uri in [project, _sibling(project, '.previous')]) {
-      if (!await _fileSystem.exists(uri)) continue;
-      try {
-        candidates.add(
-          RecoveryCandidate(
-            uri,
-            await _fileSystem.modifiedAtUtc(uri),
-            await load(uri),
-          ),
-        );
-      } on Object {
-        // Recovery considers only complete, readable project revisions.
-      }
-    }
-    if (candidates.isEmpty) return null;
-    candidates.sort((a, b) => b.savedAtUtc.compareTo(a.savedAtUtc));
-    return candidates.first;
+    final target = await _readRecoveryCandidate(project);
+    final previous = await _readRecoveryCandidate(
+      _sibling(project, '.previous'),
+    );
+    if (target == null) return previous;
+    if (previous == null) return target;
+    return previous.savedAtUtc.isAfter(target.savedAtUtc) ? previous : target;
   }
 
-  Uri _temporaryUri(Uri project) {
-    final suffix = _randomBytes
-        .nextBytes(16)
-        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
-        .join();
-    return _sibling(project, '.tmp-$suffix');
+  Future<RecoveryCandidate?> _readRecoveryCandidate(Uri uri) async {
+    try {
+      if (!await _fileSystem.exists(uri)) return null;
+      return RecoveryCandidate(
+        uri,
+        await _fileSystem.modifiedAtUtc(uri),
+        await load(uri),
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<Uri> _reserveTemporary(Uri project) async {
+    for (var attempt = 0; attempt < 16; attempt++) {
+      final bytes = _randomBytes.nextBytes(16);
+      if (bytes.length != 16 || bytes.any((byte) => byte < 0 || byte > 255)) {
+        throw StateError('Random source returned invalid temp suffix bytes');
+      }
+      final suffix = bytes
+          .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+          .join();
+      final candidate = _sibling(project, '.tmp-$suffix');
+      if (await _fileSystem.createExclusive(candidate)) return candidate;
+    }
+    throw StateError('Could not reserve a unique project temp file');
   }
 
   Uri _sibling(Uri project, String suffix) =>
