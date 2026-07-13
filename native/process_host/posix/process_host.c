@@ -21,6 +21,13 @@ enum {
   kStartDeadlineMilliseconds = 10000,
 };
 
+enum startup_event_result {
+  kStartupEventFailure = -1,
+  kStartupEventCancelled = -2,
+  kStartupEventEof = 0,
+  kStartupEventData = 1,
+};
+
 struct start_message {
   char state;
   int error_number;
@@ -92,9 +99,23 @@ static int64_t monotonic_milliseconds(void) {
   return ((int64_t)value.tv_sec * 1000) + (value.tv_nsec / 1000000);
 }
 
+static int checked_deadline(int64_t start, int milliseconds,
+                            int64_t *deadline) {
+  if (milliseconds < 0 || start < 0 ||
+      start > INT64_MAX - (int64_t)milliseconds) {
+    errno = EOVERFLOW;
+    return -1;
+  }
+  *deadline = start + milliseconds;
+  return 0;
+}
+
 static int remaining_milliseconds(int64_t deadline) {
   int64_t now = monotonic_milliseconds();
-  if (now < 0 || now >= deadline) {
+  if (now < 0) {
+    return -1;
+  }
+  if (now >= deadline) {
     return 0;
   }
   int64_t remaining = deadline - now;
@@ -118,52 +139,21 @@ static int write_all(int descriptor, const void *buffer, size_t length) {
   return 0;
 }
 
-static int read_exact_before_deadline(int descriptor, void *buffer,
-                                      size_t length, int64_t deadline,
-                                      int allow_eof) {
-  char *cursor = (char *)buffer;
-  size_t received = 0;
-  while (received < length) {
-    struct pollfd item = {descriptor, POLLIN | POLLHUP, 0};
-    int timeout = remaining_milliseconds(deadline);
-    if (timeout == 0) {
-      errno = ETIMEDOUT;
-      return -1;
-    }
-    int poll_result;
-    do {
-      poll_result = poll(&item, 1, timeout);
-    } while (poll_result == -1 && errno == EINTR);
-    if (poll_result <= 0) {
-      if (poll_result == 0) {
-        errno = ETIMEDOUT;
-      }
-      return -1;
-    }
-    ssize_t read_count;
-    do {
-      read_count = read(descriptor, cursor + received, length - received);
-    } while (read_count == -1 && errno == EINTR);
-    if (read_count > 0) {
-      received += (size_t)read_count;
-      continue;
-    }
-    if (read_count == 0 && allow_eof && received == 0) {
-      return 0;
-    }
-    errno = EPIPE;
-    return -1;
-  }
-  return 1;
+static void drain_signal_pipe(void) {
+  unsigned char bytes[32];
+  ssize_t ignored = read(signal_pipe[0], bytes, sizeof(bytes));
+  (void)ignored;
 }
 
 static void cancellation_signal_handler(int signal_number) {
+  int saved_error = errno;
   cancellation_signal = signal_number;
   if (signal_pipe[1] >= 0) {
     const unsigned char byte = 1;
     ssize_t ignored = write(signal_pipe[1], &byte, sizeof(byte));
     (void)ignored;
   }
+  errno = saved_error;
 }
 
 static int install_signal_handlers(void) {
@@ -192,6 +182,112 @@ static void restore_child_signals(void) {
   (void)sigaction(SIGINT, &action, NULL);
   (void)sigaction(SIGHUP, &action, NULL);
   (void)sigaction(SIGPIPE, &action, NULL);
+}
+
+static int control_requests_cancellation(void) {
+  char buffer[64];
+  ssize_t count = read(STDIN_FILENO, buffer, sizeof(buffer));
+  if (count == -1 && errno == EINTR) {
+    return cancellation_signal != 0;
+  }
+  if (count == 0) {
+    return 1;
+  }
+  if (count < 0) {
+    return errno == EAGAIN || errno == EWOULDBLOCK ? 0 : 1;
+  }
+  static const char expected[] = "GPH1 CANCEL\n";
+  if ((size_t)count != sizeof(expected) - 1 ||
+      memcmp(buffer, expected, sizeof(expected) - 1) != 0) {
+    fprintf(stderr, "gapless_process_host: invalid control message\n");
+  }
+  return 1;
+}
+
+static int wait_for_startup_control(int timeout_milliseconds) {
+  for (;;) {
+    if (cancellation_signal != 0) {
+      return 1;
+    }
+    struct pollfd items[2] = {
+        {STDIN_FILENO, POLLIN | POLLHUP, 0},
+        {signal_pipe[0], POLLIN, 0},
+    };
+    int result = poll(items, 2, timeout_milliseconds);
+    if (result == -1 && errno == EINTR) {
+      continue;
+    }
+    if (result == -1) {
+      return -1;
+    }
+    if ((items[1].revents & POLLIN) != 0) {
+      drain_signal_pipe();
+      return 1;
+    }
+    if ((items[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0) {
+      return control_requests_cancellation();
+    }
+    return 0;
+  }
+}
+
+static int wait_for_startup_event(int descriptor, void *buffer, size_t length,
+                                  int64_t deadline, int allow_eof) {
+  char *cursor = (char *)buffer;
+  size_t received = 0;
+  while (received < length) {
+    int timeout = remaining_milliseconds(deadline);
+    if (timeout < 0) {
+      return kStartupEventFailure;
+    }
+    if (timeout == 0) {
+      errno = ETIMEDOUT;
+      return kStartupEventFailure;
+    }
+    struct pollfd items[3] = {
+        {descriptor, POLLIN | POLLHUP, 0},
+        {STDIN_FILENO, POLLIN | POLLHUP, 0},
+        {signal_pipe[0], POLLIN, 0},
+    };
+    int poll_result = poll(items, 3, timeout);
+    if (poll_result == -1 && errno == EINTR) {
+      continue;
+    }
+    if (poll_result <= 0) {
+      if (poll_result == 0) {
+        errno = ETIMEDOUT;
+      }
+      return kStartupEventFailure;
+    }
+    if (cancellation_signal != 0 || (items[2].revents & POLLIN) != 0) {
+      if ((items[2].revents & POLLIN) != 0) {
+        drain_signal_pipe();
+      }
+      return kStartupEventCancelled;
+    }
+    if ((items[1].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0 &&
+        control_requests_cancellation()) {
+      return kStartupEventCancelled;
+    }
+    if ((items[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) == 0) {
+      continue;
+    }
+    ssize_t read_count =
+        read(descriptor, cursor + received, length - received);
+    if (read_count == -1 && errno == EINTR) {
+      continue;
+    }
+    if (read_count > 0) {
+      received += (size_t)read_count;
+      continue;
+    }
+    if (read_count == 0 && allow_eof && received == 0) {
+      return kStartupEventEof;
+    }
+    errno = EPIPE;
+    return kStartupEventFailure;
+  }
+  return kStartupEventData;
 }
 
 static void write_ready_message(int descriptor, int error_number) {
@@ -240,14 +336,14 @@ static void child_main(int ready_fd, int acknowledgment_fd, int exec_error_fd,
     close_if_open(null_input);
   }
 
-  execvp(target_arguments[0], target_arguments);
+  execv(target_arguments[0], target_arguments);
   int child_error = errno;
   (void)write_all(exec_error_fd, &child_error, sizeof(child_error));
   _exit(kTargetStartFailureExitCode);
 }
 
 static int parse_milliseconds(const char *value, int *result) {
-  if (value == NULL || *value == '\0') {
+  if (value == NULL || *value == '\0' || *value == '-') {
     return -1;
   }
   errno = 0;
@@ -295,14 +391,9 @@ static void wait_for_target(pid_t target, int *reaped, int *status) {
 
 static void wait_cleanup_tick(int milliseconds) {
   struct pollfd item = {signal_pipe[0], POLLIN, 0};
-  int result;
-  do {
-    result = poll(&item, 1, milliseconds);
-  } while (result == -1 && errno == EINTR);
+  int result = poll(&item, 1, milliseconds);
   if (result > 0 && (item.revents & POLLIN) != 0) {
-    unsigned char bytes[32];
-    ssize_t ignored = read(signal_pipe[0], bytes, sizeof(bytes));
-    (void)ignored;
+    drain_signal_pipe();
   }
 }
 
@@ -312,6 +403,9 @@ static int wait_for_group_exit(pid_t process_group, pid_t target,
   while (group_exists(process_group)) {
     reap_target_nonblocking(target, target_reaped, target_status);
     int remaining = remaining_milliseconds(deadline);
+    if (remaining < 0) {
+      return -1;
+    }
     if (remaining == 0) {
       return 0;
     }
@@ -326,6 +420,18 @@ static int wait_for_group_exit(pid_t process_group, pid_t target,
 static int cleanup_group(pid_t process_group, pid_t target, int *target_reaped,
                          int *target_status, int grace_milliseconds,
                          int force_milliseconds) {
+  int64_t cleanup_started = monotonic_milliseconds();
+  int64_t grace_deadline = -1;
+  int64_t cleanup_deadline = -1;
+  if (checked_deadline(cleanup_started, grace_milliseconds, &grace_deadline) ==
+          -1 ||
+      checked_deadline(grace_deadline, force_milliseconds,
+                       &cleanup_deadline) == -1) {
+    (void)kill(-process_group, SIGKILL);
+    wait_for_target(target, target_reaped, target_status);
+    return !group_exists(process_group);
+  }
+
   if (group_exists(process_group) && kill(-process_group, SIGTERM) == -1 &&
       errno != ESRCH) {
     fprintf(stderr,
@@ -333,10 +439,9 @@ static int cleanup_group(pid_t process_group, pid_t target, int *target_reaped,
             "(%d)\n",
             errno);
   }
-  int64_t now = monotonic_milliseconds();
-  if (now >= 0 && wait_for_group_exit(process_group, target, target_reaped,
-                                      target_status,
-                                      now + grace_milliseconds)) {
+  int grace_result = wait_for_group_exit(process_group, target, target_reaped,
+                                         target_status, grace_deadline);
+  if (grace_result == 1) {
     return 1;
   }
 
@@ -347,10 +452,9 @@ static int cleanup_group(pid_t process_group, pid_t target, int *target_reaped,
             "(%d)\n",
             errno);
   }
-  now = monotonic_milliseconds();
-  if (now >= 0 && wait_for_group_exit(process_group, target, target_reaped,
-                                      target_status,
-                                      now + force_milliseconds)) {
+  int force_result = wait_for_group_exit(process_group, target, target_reaped,
+                                         target_status, cleanup_deadline);
+  if (force_result == 1) {
     return 1;
   }
 
@@ -370,24 +474,71 @@ static int target_exit_code(int status) {
   return kHostFailureExitCode;
 }
 
-static int control_requests_cancellation(void) {
-  char buffer[64];
-  ssize_t count;
+static void kill_and_reap_child(pid_t target) {
+  (void)kill(target, SIGKILL);
+  pid_t result;
   do {
-    count = read(STDIN_FILENO, buffer, sizeof(buffer));
-  } while (count == -1 && errno == EINTR);
-  if (count == 0) {
-    return 1;
+    result = waitpid(target, NULL, 0);
+  } while (result == -1 && errno == EINTR);
+}
+
+static void terminate_starting_child(pid_t target, int cleanup_milliseconds) {
+  (void)kill(target, SIGTERM);
+  int64_t started = monotonic_milliseconds();
+  int64_t deadline = -1;
+  if (checked_deadline(started, cleanup_milliseconds, &deadline) == 0) {
+    for (;;) {
+      pid_t result = waitpid(target, NULL, WNOHANG);
+      if (result == target || (result == -1 && errno == ECHILD)) {
+        return;
+      }
+      if (result == -1 && errno != EINTR) {
+        break;
+      }
+      int remaining = remaining_milliseconds(deadline);
+      if (remaining <= 0) {
+        break;
+      }
+      wait_cleanup_tick(remaining < kPollIntervalMilliseconds
+                            ? remaining
+                            : kPollIntervalMilliseconds);
+    }
   }
-  if (count < 0) {
-    return errno == EAGAIN || errno == EWOULDBLOCK ? 0 : 1;
+  kill_and_reap_child(target);
+}
+
+static int wait_before_launch_for_test(void) {
+#if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
+  const char *ready_path = getenv("GPH_TEST_PRE_ACK_READY");
+  const char *release_path = getenv("GPH_TEST_PRE_ACK_RELEASE");
+  if (ready_path == NULL && release_path == NULL) {
+    return 0;
   }
-  static const char expected[] = "GPH1 CANCEL\n";
-  if ((size_t)count != sizeof(expected) - 1 ||
-      memcmp(buffer, expected, sizeof(expected) - 1) != 0) {
-    fprintf(stderr, "gapless_process_host: invalid control message\n");
+  if (ready_path == NULL || release_path == NULL) {
+    errno = EINVAL;
+    return -1;
   }
-  return 1;
+  int ready_fd = open(ready_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (ready_fd == -1) {
+    return -1;
+  }
+  static const char ready[] = "ready";
+  int write_result = write_all(ready_fd, ready, sizeof(ready) - 1);
+  close_if_open(ready_fd);
+  if (write_result == -1) {
+    return -1;
+  }
+  while (access(release_path, F_OK) == -1) {
+    if (errno != ENOENT) {
+      return -1;
+    }
+    int control = wait_for_startup_control(kPollIntervalMilliseconds);
+    if (control != 0) {
+      return control;
+    }
+  }
+#endif
+  return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -401,6 +552,16 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "gapless_process_host: invalid arguments\n");
     return kHostFailureExitCode;
   }
+  if (argv[6][0] != '/') {
+    fprintf(stderr,
+            "gapless_process_host: target executable must be absolute\n");
+    return kHostFailureExitCode;
+  }
+  if (grace_milliseconds > INT32_MAX - force_milliseconds) {
+    fprintf(stderr, "gapless_process_host: cleanup budget overflow\n");
+    return kHostFailureExitCode;
+  }
+  int cleanup_milliseconds = grace_milliseconds + force_milliseconds;
 
   if (create_pipe(signal_pipe, 1) == -1 || install_signal_handlers() == -1) {
     fprintf(stderr, "gapless_process_host: signal setup failed (%d)\n", errno);
@@ -435,54 +596,85 @@ int main(int argc, char *argv[]) {
   close_if_open(exec_error_pipe[1]);
   int64_t start_now = monotonic_milliseconds();
   if (start_now < 0) {
-    (void)kill(target, SIGKILL);
+    kill_and_reap_child(target);
     return kHostFailureExitCode;
   }
-  int64_t start_deadline = start_now + kStartDeadlineMilliseconds;
+  int64_t start_deadline = -1;
+  if (checked_deadline(start_now, kStartDeadlineMilliseconds,
+                       &start_deadline) == -1) {
+    kill_and_reap_child(target);
+    return kHostFailureExitCode;
+  }
+
   struct start_message message = {0, 0};
-  if (read_exact_before_deadline(ready_pipe[0], &message, sizeof(message),
-                                 start_deadline, 0) != 1 ||
-      message.state != 'R') {
+  int ready_result = wait_for_startup_event(
+      ready_pipe[0], &message, sizeof(message), start_deadline, 0);
+  close_if_open(ready_pipe[0]);
+  if (ready_result == kStartupEventCancelled) {
+    terminate_starting_child(target, cleanup_milliseconds);
+    return kCancelledExitCode;
+  }
+  if (ready_result != kStartupEventData || message.state != 'R') {
     int child_error = message.state == 'E' ? message.error_number : errno;
     fprintf(stderr,
             "gapless_process_host: target process-group setup failed (%d)\n",
             child_error);
-    (void)kill(target, SIGKILL);
-    (void)waitpid(target, NULL, 0);
+    kill_and_reap_child(target);
     return kTargetStartFailureExitCode;
   }
-  close_if_open(ready_pipe[0]);
 
   pid_t process_group = getpgid(target);
   if (process_group != target) {
     fprintf(stderr, "gapless_process_host: process-group verification failed\n");
-    (void)kill(target, SIGKILL);
-    (void)waitpid(target, NULL, 0);
+    kill_and_reap_child(target);
     return kTargetStartFailureExitCode;
   }
+  int target_reaped = 0;
+  int target_status = 0;
+  int pre_ack = wait_before_launch_for_test();
+  if (pre_ack == 0) {
+    pre_ack = wait_for_startup_control(0);
+  }
+  if (pre_ack != 0) {
+    int cleaned = cleanup_group(process_group, target, &target_reaped,
+                                &target_status, grace_milliseconds,
+                                force_milliseconds);
+    if (pre_ack < 0 || !cleaned) {
+      return kHostFailureExitCode;
+    }
+    return kCancelledExitCode;
+  }
+
   const unsigned char acknowledgment = 1;
   if (write_all(acknowledgment_pipe[1], &acknowledgment,
                 sizeof(acknowledgment)) == -1) {
-    (void)kill(-process_group, SIGKILL);
-    (void)waitpid(target, NULL, 0);
+    kill_and_reap_child(target);
     return kTargetStartFailureExitCode;
   }
   close_if_open(acknowledgment_pipe[1]);
 
   int exec_error = 0;
-  int exec_result = read_exact_before_deadline(
+  int exec_result = wait_for_startup_event(
       exec_error_pipe[0], &exec_error, sizeof(exec_error), start_deadline, 1);
   close_if_open(exec_error_pipe[0]);
-  if (exec_result != 0) {
-    fprintf(stderr, "gapless_process_host: target exec failed (%d: %.160s)\n",
-            exec_error, strerror(exec_error));
-    (void)kill(-process_group, SIGKILL);
-    (void)waitpid(target, NULL, 0);
+  if (exec_result == kStartupEventCancelled) {
+    int cleaned = cleanup_group(process_group, target, &target_reaped,
+                                &target_status, grace_milliseconds,
+                                force_milliseconds);
+    return cleaned ? kCancelledExitCode : kHostFailureExitCode;
+  }
+  if (exec_result != kStartupEventEof) {
+    if (exec_result == kStartupEventData) {
+      fprintf(stderr, "gapless_process_host: target exec failed (%d: %.160s)\n",
+              exec_error, strerror(exec_error));
+    } else {
+      fprintf(stderr, "gapless_process_host: target exec status failed (%d)\n",
+              errno);
+    }
+    kill_and_reap_child(target);
     return kTargetStartFailureExitCode;
   }
 
-  int target_reaped = 0;
-  int target_status = 0;
   for (;;) {
     reap_target_nonblocking(target, &target_reaped, &target_status);
     if (target_reaped) {
@@ -502,10 +694,10 @@ int main(int argc, char *argv[]) {
         {STDIN_FILENO, POLLIN | POLLHUP, 0},
         {signal_pipe[0], POLLIN, 0},
     };
-    int poll_result;
-    do {
-      poll_result = poll(items, 2, kPollIntervalMilliseconds);
-    } while (poll_result == -1 && errno == EINTR);
+    int poll_result = poll(items, 2, kPollIntervalMilliseconds);
+    if (poll_result == -1 && errno == EINTR) {
+      continue;
+    }
     if (poll_result == -1) {
       fprintf(stderr, "gapless_process_host: control wait failed (%d)\n",
               errno);
@@ -516,6 +708,7 @@ int main(int argc, char *argv[]) {
       cancel = control_requests_cancellation();
     }
     if ((items[1].revents & POLLIN) != 0) {
+      drain_signal_pipe();
       cancel = 1;
     }
     if (cancel) {

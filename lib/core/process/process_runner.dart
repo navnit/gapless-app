@@ -1,4 +1,5 @@
 import 'package:collection/collection.dart';
+import 'package:path/path.dart' as p;
 
 final class ProcessRequest {
   ProcessRequest({
@@ -50,7 +51,9 @@ abstract interface class RunningProcess {
 }
 
 String _validateExecutable(String executable) {
-  if (executable.isEmpty || executable.contains('\u0000')) {
+  final isAbsolute =
+      p.posix.isAbsolute(executable) || p.windows.isAbsolute(executable);
+  if (executable.isEmpty || executable.contains('\u0000') || !isAbsolute) {
     throw ArgumentError.value(executable, 'executable');
   }
   return executable;

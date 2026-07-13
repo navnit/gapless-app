@@ -17,22 +17,22 @@ void main() {
   late IoProcessRunner runner;
 
   setUpAll(() async {
-    if (!supportsPosixNativeHostTests) return;
+    if (!supportsNativeHostTests) return;
     suiteTemp = Directory.systemTemp.createTempSync('gapless-runner-host-');
     nativeProcessHost = NativeProcessHost(
-      executablePath: await compilePosixProcessHost(suiteTemp),
+      executablePath: await compileNativeProcessHost(suiteTemp),
     );
   });
 
   tearDownAll(() {
-    if (supportsPosixNativeHostTests && suiteTemp.existsSync()) {
+    if (supportsNativeHostTests && suiteTemp.existsSync()) {
       suiteTemp.deleteSync(recursive: true);
     }
   });
 
   setUp(() {
     temp = Directory.systemTemp.createTempSync('gapless-process-test-');
-    if (supportsPosixNativeHostTests) {
+    if (supportsNativeHostTests) {
       runner = IoProcessRunner(nativeProcessHost: nativeProcessHost);
     }
   });
@@ -40,7 +40,7 @@ void main() {
   test(
     'requires the bundled host and never falls back to the target',
     () async {
-      if (!supportsPosixNativeHostTests) return;
+      if (!supportsNativeHostTests) return;
       final markerPath = p.join(temp.path, 'target-started.json');
       final missingHost = NativeProcessHost(
         executablePath: p.join(temp.path, 'missing-process-host'),
@@ -66,7 +66,7 @@ void main() {
     }
   });
 
-  _posixHostTest(
+  _nativeHostTest(
     'passes hostile-looking paths as one argument without a shell',
     () async {
       final capturePath = p.join(temp.path, 'arguments.json');
@@ -95,7 +95,7 @@ void main() {
     },
   );
 
-  _posixHostTest(
+  _nativeHostTest(
     'decodes Unicode and replaces malformed UTF-8 on both streams',
     () async {
       final running = await runner.start(_fixtureRequest(['bytes']));
@@ -108,7 +108,7 @@ void main() {
     },
   );
 
-  _posixHostTest(
+  _nativeHostTest(
     'honors the requested environment and working directory',
     () async {
       final contextPath = p.join(temp.path, 'context.json');
@@ -145,17 +145,38 @@ void main() {
     },
   );
 
-  _posixHostTest('exposes a nonzero exit code without losing output', () async {
-    final running = await runner.start(_fixtureRequest(['fail', '17']));
-    final stdout = running.stdoutLines.toList();
-    final stderr = running.stderrLines.toList();
+  _windowsHostTest('does not leak an unrelated inheritable handle', () async {
+    final resultPath = p.join(temp.path, 'handle-privacy.txt');
+    final running = await runner.start(
+      ProcessRequest(
+        executable: _dartExecutable,
+        arguments: [
+          _fixturePath('process_fixture.dart'),
+          'check-unrelated-handle',
+          resultPath,
+        ],
+        environment: const {'GPH_TEST_CREATE_UNRELATED_HANDLE': '1'},
+      ),
+    );
 
-    expect(await running.exitCode, 17);
-    expect(await stdout, ['before failure']);
-    expect(await stderr, ['structured diagnostic']);
+    expect(await running.exitCode, 0);
+    expect(await File(resultPath).readAsString(), 'invalid');
   });
 
-  _posixHostTest(
+  _nativeHostTest(
+    'exposes a nonzero exit code without losing output',
+    () async {
+      final running = await runner.start(_fixtureRequest(['fail', '17']));
+      final stdout = running.stdoutLines.toList();
+      final stderr = running.stderrLines.toList();
+
+      expect(await running.exitCode, 17);
+      expect(await stdout, ['before failure']);
+      expect(await stderr, ['structured diagnostic']);
+    },
+  );
+
+  _nativeHostTest(
     'bounds diagnostics without truncating live streams',
     () async {
       final boundedRunner = IoProcessRunner(
@@ -193,7 +214,7 @@ void main() {
     },
   );
 
-  _posixHostTest(
+  _nativeHostTest(
     'bounds newline output before a listener without blocking exit',
     () async {
       final boundedRunner = IoProcessRunner(
@@ -217,7 +238,7 @@ void main() {
     },
   );
 
-  _posixHostTest(
+  _nativeHostTest(
     'caps a single enormous unterminated line and diagnostic bytes',
     () async {
       final boundedRunner = IoProcessRunner(
@@ -240,7 +261,7 @@ void main() {
     },
   );
 
-  _posixHostTest(
+  _nativeHostTest(
     'replays a bounded tail then preserves ordered live lines',
     () async {
       final releasePath = p.join(temp.path, 'release');
@@ -272,7 +293,7 @@ void main() {
     },
   );
 
-  _posixHostTest(
+  _nativeHostTest(
     'handles split multibyte UTF-8, CRLF, and a final partial line',
     () async {
       final running = await runner.start(_fixtureRequest(['split-bytes']));
@@ -314,13 +335,31 @@ void main() {
       throwsArgumentError,
     );
     expect(
+      () => ProcessRequest(executable: 'tools/engine', arguments: const []),
+      throwsArgumentError,
+    );
+    expect(
       () =>
-          ProcessRequest(executable: 'dart', arguments: const ['bad\u0000arg']),
+          ProcessRequest(executable: r'tools\engine.exe', arguments: const []),
       throwsArgumentError,
     );
     expect(
       () => ProcessRequest(
-        executable: 'dart',
+        executable: r'C:tools\engine.exe',
+        arguments: const [],
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => ProcessRequest(
+        executable: _dartExecutable,
+        arguments: const ['bad\u0000arg'],
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => ProcessRequest(
+        executable: _dartExecutable,
         arguments: const [],
         environment: const {'BAD=KEY': 'value'},
       ),
@@ -328,7 +367,37 @@ void main() {
     );
   });
 
-  _posixHostTest(
+  test('Dart cancellation watchdog exceeds the full native cleanup budget', () {
+    expect(
+      () => IoProcessRunner(
+        nativeProcessHost: nativeProcessHost,
+        forceKillTimeout: Duration.zero,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => IoProcessRunner(
+        nativeProcessHost: nativeProcessHost,
+        terminationGracePeriod: const Duration(milliseconds: 300),
+        forceKillTimeout: const Duration(milliseconds: 300),
+        cancellationTimeout: const Duration(milliseconds: 600),
+      ),
+      throwsArgumentError,
+    );
+
+    final guarded = IoProcessRunner(
+      nativeProcessHost: nativeProcessHost,
+      terminationGracePeriod: const Duration(milliseconds: 300),
+      forceKillTimeout: const Duration(milliseconds: 300),
+      cancellationTimeout: const Duration(milliseconds: 1600),
+    );
+    expect(
+      guarded.cancellationTimeout,
+      greaterThan(guarded.terminationGracePeriod + guarded.forceKillTimeout),
+    );
+  });
+
+  _nativeHostTest(
     'cancel is idempotent, waits for the process tree, and is not success',
     () async {
       final childPidPath = p.join(temp.path, 'child.pid');
@@ -356,10 +425,10 @@ void main() {
     },
   );
 
-  _posixHostTest(
+  _nativeHostTest(
     'cancels an orphaned descendant after its direct parent exits',
     () async {
-      if (!supportsPosixNativeHostTests) return;
+      if (!supportsNativeHostTests) return;
       final childPidPath = p.join(temp.path, 'orphan-grandchild.pid');
       final running = await runner.start(
         _fixtureRequest(['orphan-grandchild', childPidPath]),
@@ -409,7 +478,7 @@ void main() {
         nativeProcessHost: nativeProcessHost,
         terminationGracePeriod: const Duration(milliseconds: 150),
         forceKillTimeout: const Duration(seconds: 2),
-        cancellationTimeout: const Duration(seconds: 3),
+        cancellationTimeout: const Duration(seconds: 4),
       );
       final running = await forceRunner.start(
         _fixtureRequest(['ignore-term-tree', childPidPath]),
@@ -420,16 +489,16 @@ void main() {
 
       await running.cancel();
 
-      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 3)));
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 4)));
       expect(await isProcessAlive(childPid), isFalse);
       expect(await running.exitCode, isNot(0));
     },
   );
 
-  _posixHostTest(
+  _nativeHostTest(
     'cleans lingering descendants before a normal host exit',
     () async {
-      if (!supportsPosixNativeHostTests) return;
+      if (!supportsNativeHostTests) return;
       final childPidPath = p.join(temp.path, 'lingering-child.pid');
       final cleanupRunner = IoProcessRunner(
         nativeProcessHost: nativeProcessHost,
@@ -446,10 +515,10 @@ void main() {
     },
   );
 
-  _posixHostTest(
+  _nativeHostTest(
     'control-channel EOF cancels the owned process group',
     () async {
-      if (!supportsPosixNativeHostTests) return;
+      if (!supportsNativeHostTests) return;
       final childPidPath = p.join(temp.path, 'eof-child.pid');
       final host = await Process.start(nativeProcessHost.executablePath, [
         '--grace-ms',
@@ -475,8 +544,8 @@ void main() {
     },
   );
 
-  _posixHostTest('target exec failure is bounded and nonzero', () async {
-    if (!supportsPosixNativeHostTests) return;
+  _nativeHostTest('target exec failure is bounded and nonzero', () async {
+    if (!supportsNativeHostTests) return;
     final failureRunner = IoProcessRunner(
       nativeProcessHost: nativeProcessHost,
       maxDiagnosticLines: 2,
@@ -553,5 +622,23 @@ void _posixHostTest(String description, FutureOr<void> Function() body) {
     skip: supportsPosixNativeHostTests
         ? false
         : 'Native runtime proof is deferred to POSIX hosts',
+  );
+}
+
+void _nativeHostTest(String description, FutureOr<void> Function() body) {
+  test(
+    description,
+    body,
+    skip: supportsNativeHostTests
+        ? false
+        : 'Native runtime proof requires a desktop host',
+  );
+}
+
+void _windowsHostTest(String description, FutureOr<void> Function() body) {
+  test(
+    description,
+    body,
+    skip: Platform.isWindows ? false : 'Windows runtime proof runs in CI',
   );
 }

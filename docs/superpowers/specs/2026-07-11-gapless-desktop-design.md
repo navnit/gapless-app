@@ -189,9 +189,10 @@ Dependencies point inward. Domain types do not import Flutter, `media_kit`, proc
 
 #### Native process ownership host
 
-- Launches Auto-Editor behind a small first-party executable resolved only from the application bundle.
-- Establishes a child process group before `exec` on macOS/Linux and assigns a suspended target to a kill-on-close Job Object before resume on Windows.
+- Launches an absolute Auto-Editor path behind a small first-party executable resolved only from the application bundle; neither boundary searches `PATH`.
+- Establishes a child process group before `execv` on macOS/Linux. On Windows, `STARTUPINFOEXW` creates the suspended target already associated with a kill-on-close Job Object and restricts inherited handles to its three standard handles before resume.
 - Owns cancellation through a private versioned stdin control channel; EOF and host termination cannot intentionally orphan the managed process tree.
+- Uses one checked monotonic cleanup deadline. The Dart watchdog has a fixed scheduling margin above the complete native budget and cannot return while the host remains live.
 - Uses no shell, process-table discovery, WMI, or command-line cleanup utility. Target arguments remain discrete and the target inherits the adapter's sanitized environment and working directory.
 
 ## 7. Engine integration

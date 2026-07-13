@@ -1,0 +1,54 @@
+name: Windows process host
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-process-host.yml'
+      - 'lib/core/process/**'
+      - 'native/process_host/windows/**'
+      - 'test/core/process/**'
+      - 'test/fixtures/process/**'
+      - 'test/helpers/native_process_host_test_support.dart'
+      - 'windows/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+  push:
+    paths:
+      - '.github/workflows/windows-process-host.yml'
+      - 'lib/core/process/**'
+      - 'native/process_host/windows/**'
+      - 'test/core/process/**'
+      - 'test/fixtures/process/**'
+      - 'test/helpers/native_process_host_test_support.dart'
+      - 'windows/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  process-host:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.4
+          channel: stable
+          cache: true
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Run native process lifecycle tests
+        run: flutter test test/core/process
+      - name: Build Windows bundle
+        run: flutter build windows --debug
+      - name: Verify bundled process host
+        shell: pwsh
+        run: |
+          $hostPath = 'build\windows\x64\runner\Debug\gapless_process_host.exe'
+          if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) {
+            throw "Missing bundled native process host: $hostPath"
+          }

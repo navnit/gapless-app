@@ -48,6 +48,7 @@ endfunction()
 add_executable(gapless_process_host
   "${CMAKE_CURRENT_SOURCE_DIR}/../native/process_host/windows/process_host.cpp")
 APPLY_STANDARD_SETTINGS(gapless_process_host)
+target_compile_definitions(gapless_process_host PRIVATE _WIN32_WINNT=0x0A00)
 
 # Flutter library and tool build rules.
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")

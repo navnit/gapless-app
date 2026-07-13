@@ -604,7 +604,7 @@ abstract interface class RunningProcess {
 }
 ```
 
-`IoProcessRunner` must launch the bundle-relative `gapless_process_host` with `runInShell: false`, pass the target executable and every argument discretely, decode lines with replacement for invalid UTF-8, bound captured diagnostics, and make `cancel()` idempotent. The native host establishes ownership before target execution: a synchronized POSIX process group on macOS/Linux and a kill-on-close Job Object with suspended-create/assign/resume ordering on Windows. Cancellation and control-channel EOF enter bounded native tree cleanup; there is no direct-target or process-table fallback.
+`IoProcessRunner` must launch the bundle-relative `gapless_process_host` with `runInShell: false`, require an absolute target executable path, pass the target executable and every argument discretely, decode lines with replacement for invalid UTF-8, bound captured diagnostics, and make `cancel()` idempotent. The native host establishes ownership before target execution: a synchronized POSIX process group on macOS/Linux and Windows `STARTUPINFOEXW` Job-list association at suspended process creation. Cancellation and control-channel EOF enter one bounded native tree-cleanup deadline; the Dart watchdog includes a documented margin above that complete budget. There is no direct-target, PATH-search, or process-table fallback.
 
 - [ ] **Step 3: Define typed engine tasks**
 
@@ -718,9 +718,11 @@ git commit -m "feat: add secure engine process contracts"
 
 - Create first-party GPL native host sources under `native/process_host/posix` and `native/process_host/windows` using OS APIs only.
 - Resolve the host only from the macOS app Resources directory, Windows application directory, or Linux bundle `lib/` directory.
+- Require absolute target paths at the Dart and native boundaries; POSIX uses `execv` and Windows passes the absolute application name separately.
 - Preserve the Task 4 `ProcessRunner`, `RunningProcess`, `EngineTask`, and `EnginePort` interfaces while moving process-tree ownership and cleanup out of Dart.
+- On Windows, associate the suspended target at creation with `PROC_THREAD_ATTRIBUTE_JOB_LIST` and restrict inheritance with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` before resuming it.
 - Build and bundle `gapless_process_host` from source for every desktop target; sign the macOS nested executable through the Runner copy phase. Generated native binaries remain build artifacts.
-- Compile the POSIX host directly in current-platform tests and retain static Windows Job Object, argument quoting, build-path, and forbidden-helper contracts until Windows runtime CI executes it.
+- Compile the current native host directly in focused tests. A scoped Windows CI job runs native lifecycle/handle-privacy behavior, builds the Windows bundle, and verifies the exact host path; static Job Object, argument quoting, timeout, build-path, and forbidden-helper contracts remain supplemental.
 
 ---
 

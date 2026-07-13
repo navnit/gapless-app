@@ -18,7 +18,7 @@ final class IoProcessRunner implements ProcessRunner {
     this.maxLineCharacters = 16 * 1024,
     this.terminationGracePeriod = const Duration(seconds: 2),
     this.forceKillTimeout = const Duration(seconds: 5),
-    this.cancellationTimeout = const Duration(seconds: 7),
+    this.cancellationTimeout = const Duration(seconds: 8),
     Map<String, String>? parentEnvironment,
   }) : nativeProcessHost = nativeProcessHost ?? NativeProcessHost(),
        parentEnvironment = Map.unmodifiable(
@@ -50,13 +50,26 @@ final class IoProcessRunner implements ProcessRunner {
         'terminationGracePeriod',
       );
     }
-    if (forceKillTimeout.isNegative) {
+    if (forceKillTimeout <= Duration.zero) {
       throw ArgumentError.value(forceKillTimeout, 'forceKillTimeout');
     }
     if (cancellationTimeout <= Duration.zero) {
       throw ArgumentError.value(cancellationTimeout, 'cancellationTimeout');
     }
+    final minimumCancellationTimeout =
+        terminationGracePeriod + forceKillTimeout + cancellationSafetyMargin;
+    if (cancellationTimeout < minimumCancellationTimeout) {
+      throw ArgumentError.value(
+        cancellationTimeout,
+        'cancellationTimeout',
+        'Must include the full native cleanup budget plus the '
+            '${cancellationSafetyMargin.inMilliseconds}ms watchdog margin',
+      );
+    }
   }
+
+  /// Scheduling/control margin above the native host's single cleanup budget.
+  static const cancellationSafetyMargin = Duration(seconds: 1);
 
   final NativeProcessHost nativeProcessHost;
   final int maxDiagnosticLines;
@@ -196,7 +209,15 @@ final class IoRunningProcess implements RunningProcess {
     } on Object {
       // EOF or host exit has already closed the private control channel.
     }
-    await _publishedExitCode.timeout(deadline.remaining);
+    try {
+      await _publishedExitCode.timeout(deadline.remaining);
+    } on TimeoutException {
+      // The native host should already have completed its bounded cleanup.
+      // Ask it to enter the same cleanup path, then wait without another Dart
+      // timeout: cancel must never return or throw while the host/tree is live.
+      _process.kill();
+      await _publishedExitCode;
+    }
   }
 }
 
