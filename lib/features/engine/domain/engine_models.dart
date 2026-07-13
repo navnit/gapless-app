@@ -3,9 +3,10 @@ import 'package:gapless/features/editor/domain/effective_timeline.dart';
 import 'package:gapless/features/editor/domain/timeline_segment.dart';
 
 final class SizeInt {
-  const SizeInt(this.width, this.height)
-    : assert(width > 0),
-      assert(height > 0);
+  SizeInt(this.width, this.height) {
+    if (width <= 0) throw RangeError.value(width, 'width');
+    if (height <= 0) throw RangeError.value(height, 'height');
+  }
 
   final int width;
   final int height;
@@ -20,7 +21,7 @@ final class SizeInt {
 }
 
 final class MediaMetadata {
-  const MediaMetadata({
+  MediaMetadata({
     required this.durationUs,
     required this.timebaseNumerator,
     required this.timebaseDenominator,
@@ -29,12 +30,28 @@ final class MediaMetadata {
     required this.hasAudio,
     required this.sampleRate,
     required this.audioLayout,
-  }) : assert(durationUs > 0),
-       assert(timebaseNumerator > 0),
-       assert(timebaseDenominator > 0),
-       assert(videoCodec != ''),
-       assert(sampleRate >= 0),
-       assert(hasAudio ? sampleRate > 0 && audioLayout != '' : sampleRate == 0);
+  }) {
+    if (durationUs <= 0) throw RangeError.value(durationUs, 'durationUs');
+    if (timebaseNumerator <= 0) {
+      throw RangeError.value(timebaseNumerator, 'timebaseNumerator');
+    }
+    if (timebaseDenominator <= 0) {
+      throw RangeError.value(timebaseDenominator, 'timebaseDenominator');
+    }
+    if (videoCodec.trim().isEmpty) {
+      throw ArgumentError.value(videoCodec, 'videoCodec');
+    }
+    if (hasAudio) {
+      if (sampleRate <= 0) throw RangeError.value(sampleRate, 'sampleRate');
+      if (audioLayout.trim().isEmpty) {
+        throw ArgumentError.value(audioLayout, 'audioLayout');
+      }
+    } else if (sampleRate != 0 || audioLayout.isNotEmpty) {
+      throw ArgumentError(
+        'Media without audio must use sampleRate 0 and an empty audioLayout',
+      );
+    }
+  }
 
   final int durationUs;
   final int timebaseNumerator;

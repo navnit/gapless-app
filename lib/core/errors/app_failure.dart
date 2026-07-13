@@ -92,12 +92,14 @@ final class MediaReadFailure extends AppFailure {
 }
 
 final class DiskFullFailure extends AppFailure {
-  const DiskFullFailure({
-    this.destination,
-    this.requiredBytes,
-    this.availableBytes,
-  }) : assert(requiredBytes == null || requiredBytes >= 0),
-       assert(availableBytes == null || availableBytes >= 0);
+  DiskFullFailure({this.destination, this.requiredBytes, this.availableBytes}) {
+    if (requiredBytes case final bytes? when bytes < 0) {
+      throw RangeError.value(bytes, 'requiredBytes');
+    }
+    if (availableBytes case final bytes? when bytes < 0) {
+      throw RangeError.value(bytes, 'availableBytes');
+    }
+  }
 
   final Uri? destination;
   final int? requiredBytes;

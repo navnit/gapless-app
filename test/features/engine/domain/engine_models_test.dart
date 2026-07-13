@@ -38,12 +38,9 @@ void main() {
   });
 
   test('rejects invalid sizes, metadata, samples, timelines, and progress', () {
-    expect(() => SizeInt(0, 1080), throwsA(isA<AssertionError>()));
-    expect(() => _metadata(durationUs: 0), throwsA(isA<AssertionError>()));
-    expect(
-      () => _metadata(timebaseDenominator: 0),
-      throwsA(isA<AssertionError>()),
-    );
+    expect(() => SizeInt(0, 1080), throwsArgumentError);
+    expect(() => _metadata(durationUs: 0), throwsArgumentError);
+    expect(() => _metadata(timebaseDenominator: 0), throwsArgumentError);
     expect(
       () => AnalysisLevels(samples: const [-1], samplePeriodUs: 1),
       throwsRangeError,
@@ -97,6 +94,11 @@ void main() {
     expect(failure.diagnostics, ['line one', 'line two']);
     expect(() => failure.diagnostics.add('mutate'), throwsUnsupportedError);
     expect(const OperationCancelled(operation: 'render').operation, 'render');
+  });
+
+  test('structured failure byte counts reject negative runtime values', () {
+    expect(() => DiskFullFailure(requiredBytes: -1), throwsRangeError);
+    expect(() => DiskFullFailure(availableBytes: -1), throwsRangeError);
   });
 }
 

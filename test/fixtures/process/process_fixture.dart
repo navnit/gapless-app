@@ -15,6 +15,7 @@ Future<void> main(List<String> arguments) async {
         jsonEncode({
           'workingDirectory': Directory.current.path,
           'environment': Platform.environment['GAPLESS_TEST_VALUE'],
+          'parentSecret': Platform.environment['GAPLESS_PARENT_SECRET'],
         }),
         flush: true,
       );
@@ -29,10 +30,35 @@ Future<void> main(List<String> arguments) async {
         stdout.writeln('stdout-$index');
         stderr.writeln('stderr-$index');
       }
+    case 'long-line':
+      stdout.add(List<int>.filled(int.parse(arguments[1]), 0x61));
+    case 'replay-then-live':
+      final preCount = int.parse(arguments[1]);
+      final release = File(arguments[2]);
+      final ready = File(arguments[3]);
+      for (var index = 0; index < preCount; index++) {
+        stdout.writeln('pre-$index');
+      }
+      await stdout.flush();
+      ready.writeAsStringSync('ready', flush: true);
+      while (!release.existsSync()) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      stdout
+        ..writeln('live-0')
+        ..writeln('live-1');
+    case 'split-bytes':
+      stdout.add([0x41, 0xe2]);
+      await stdout.flush();
+      stdout.add([0x82]);
+      await stdout.flush();
+      stdout.add([0xac, 0x0d]);
+      await stdout.flush();
+      stdout.add([0x0a, 0x42, 0x0a, 0x43]);
     case 'wait':
       stdout.writeln('READY');
       await stdout.flush();
-      await Completer<void>().future;
+      await _waitForever();
     case 'tree':
       final child = await Process.start(Platform.resolvedExecutable, [
         Platform.script.toFilePath(),
@@ -46,7 +72,53 @@ Future<void> main(List<String> arguments) async {
       stdout.writeln('READY');
       await stdout.flush();
       await Completer<void>().future;
+    case 'orphan-child':
+      final child = await _startReadyChild();
+      File(arguments[1]).writeAsStringSync('${child.pid}', flush: true);
+      stdout.writeln('READY');
+      await stdout.flush();
+      final release = File(arguments[2]);
+      while (!release.existsSync()) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      exit(0);
+    case 'spawn-child-on-term':
+      final childPidFile = File(arguments[1]);
+      var spawned = false;
+      ProcessSignal.sigterm.watch().listen((_) async {
+        if (spawned) return;
+        spawned = true;
+        final child = await Process.start(Platform.resolvedExecutable, [
+          Platform.script.toFilePath(),
+          'wait',
+        ], runInShell: false);
+        childPidFile.writeAsStringSync('${child.pid}', flush: true);
+      });
+      stdout.writeln('READY');
+      await stdout.flush();
+      await Completer<void>().future;
     default:
       throw ArgumentError.value(arguments.first, 'mode');
   }
+}
+
+Future<void> _waitForever() async {
+  final keepAlive = Timer.periodic(const Duration(hours: 1), (_) {});
+  try {
+    await Completer<void>().future;
+  } finally {
+    keepAlive.cancel();
+  }
+}
+
+Future<Process> _startReadyChild() async {
+  final child = await Process.start(Platform.resolvedExecutable, [
+    Platform.script.toFilePath(),
+    'wait',
+  ], runInShell: false);
+  await child.stdout
+      .transform(utf8.decoder)
+      .transform(const LineSplitter())
+      .first;
+  return child;
 }
