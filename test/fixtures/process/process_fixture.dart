@@ -82,6 +82,28 @@ Future<void> main(List<String> arguments) async {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
       exit(0);
+    case 'orphan-grandchild':
+      final parent = await Process.start(Platform.resolvedExecutable, [
+        Platform.script.toFilePath(),
+        'spawn-child-and-exit',
+        arguments[1],
+      ], runInShell: false);
+      if (await parent.exitCode != 0) {
+        throw StateError('Intermediate parent failed');
+      }
+      stdout.writeln('READY');
+      await stdout.flush();
+      await _waitForever();
+    case 'spawn-child-and-exit':
+      final child = await _startReadyChild();
+      File(arguments[1]).writeAsStringSync('${child.pid}', flush: true);
+      exit(0);
+    case 'exit-with-child':
+      final child = await _startReadyChild();
+      File(arguments[1]).writeAsStringSync('${child.pid}', flush: true);
+      stdout.writeln('READY');
+      await stdout.flush();
+      exit(0);
     case 'spawn-child-on-term':
       final childPidFile = File(arguments[1]);
       var spawned = false;
@@ -97,6 +119,25 @@ Future<void> main(List<String> arguments) async {
       stdout.writeln('READY');
       await stdout.flush();
       await Completer<void>().future;
+    case 'ignore-term-tree':
+      final child = await Process.start(Platform.resolvedExecutable, [
+        Platform.script.toFilePath(),
+        'ignore-term',
+      ], runInShell: false);
+      await child.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .first;
+      File(arguments[1]).writeAsStringSync('${child.pid}', flush: true);
+      ProcessSignal.sigterm.watch().listen((_) {});
+      stdout.writeln('READY');
+      await stdout.flush();
+      await _waitForever();
+    case 'ignore-term':
+      ProcessSignal.sigterm.watch().listen((_) {});
+      stdout.writeln('READY');
+      await stdout.flush();
+      await _waitForever();
     default:
       throw ArgumentError.value(arguments.first, 'mode');
   }

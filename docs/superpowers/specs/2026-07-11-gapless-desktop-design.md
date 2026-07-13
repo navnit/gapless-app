@@ -187,6 +187,13 @@ Dependencies point inward. Domain types do not import Flutter, `media_kit`, proc
 - Converts exit status and diagnostic output into typed failures.
 - Contains every dependency on a particular Auto-Editor version.
 
+#### Native process ownership host
+
+- Launches Auto-Editor behind a small first-party executable resolved only from the application bundle.
+- Establishes a child process group before `exec` on macOS/Linux and assigns a suspended target to a kill-on-close Job Object before resume on Windows.
+- Owns cancellation through a private versioned stdin control channel; EOF and host termination cannot intentionally orphan the managed process tree.
+- Uses no shell, process-table discovery, WMI, or command-line cleanup utility. Target arguments remain discrete and the target inherits the adapter's sanitized environment and working directory.
+
 ## 7. Engine integration
 
 ### 7.1 Pinned engine policy
@@ -334,7 +341,7 @@ Errors are typed and mapped to actionable user messages.
 - Linux x64: AppImage targeting a documented glibc baseline.
 - Flatpak follows after MVP packaging is stable.
 
-Each target is built on its native CI runner and contains the matching Auto-Editor binary and playback libraries. Release artifacts include SHA-256 checksums, an SBOM, GPL source/build offer, and third-party notices.
+Each target is built on its native CI runner and contains the matching Auto-Editor binary, the first-party `gapless_process_host`, and playback libraries. The macOS host is nested signed with the application; Windows bundles it beside the app executable and Linux under the bundle `lib/` directory. Release artifacts include SHA-256 checksums, an SBOM, GPL source/build offer, and third-party notices.
 
 ### 11.2 Licensing
 

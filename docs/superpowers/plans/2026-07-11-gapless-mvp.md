@@ -604,7 +604,7 @@ abstract interface class RunningProcess {
 }
 ```
 
-`IoProcessRunner` must call `Process.start(executable, arguments, runInShell: false)`, decode lines with replacement for invalid UTF-8, bound captured diagnostics, and make `cancel()` idempotent. On Windows, start `taskkill.exe` directly with `['/PID', process.pid.toString(), '/T', '/F']` for tree cleanup; on POSIX, terminate then force-kill after a bounded grace period.
+`IoProcessRunner` must launch the bundle-relative `gapless_process_host` with `runInShell: false`, pass the target executable and every argument discretely, decode lines with replacement for invalid UTF-8, bound captured diagnostics, and make `cancel()` idempotent. The native host establishes ownership before target execution: a synchronized POSIX process group on macOS/Linux and a kill-on-close Job Object with suspended-create/assign/resume ordering on Windows. Cancellation and control-channel EOF enter bounded native tree cleanup; there is no direct-target or process-table fallback.
 
 - [ ] **Step 3: Define typed engine tasks**
 
@@ -713,6 +713,14 @@ Commit:
 git add lib/core lib/features/engine/domain test/core test/helpers test/fixtures/process
 git commit -m "feat: add secure engine process contracts"
 ```
+
+#### Task 4A approved architecture addendum: native process ownership host
+
+- Create first-party GPL native host sources under `native/process_host/posix` and `native/process_host/windows` using OS APIs only.
+- Resolve the host only from the macOS app Resources directory, Windows application directory, or Linux bundle `lib/` directory.
+- Preserve the Task 4 `ProcessRunner`, `RunningProcess`, `EngineTask`, and `EnginePort` interfaces while moving process-tree ownership and cleanup out of Dart.
+- Build and bundle `gapless_process_host` from source for every desktop target; sign the macOS nested executable through the Runner copy phase. Generated native binaries remain build artifacts.
+- Compile the POSIX host directly in current-platform tests and retain static Windows Job Object, argument quoting, build-path, and forbidden-helper contracts until Windows runtime CI executes it.
 
 ---
 
