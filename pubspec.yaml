@@ -58,6 +58,12 @@ flutter:
   uses-material-design: true
   assets:
     - assets/engine/manifest.json
+    - assets/fonts/OFL.txt
+    - assets/fonts/SHA256SUMS
+  fonts:
+    - family: InstrumentSans
+      fonts:
+        - asset: assets/fonts/InstrumentSans-VariableFont_wdth,wght.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:
