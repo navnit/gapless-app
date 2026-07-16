@@ -5,6 +5,7 @@ import 'package:gapless/core/errors/app_failure.dart';
 import 'package:gapless/core/process/process_runner.dart';
 import 'package:gapless/features/editor/domain/analysis_settings.dart';
 import 'package:gapless/features/engine/data/auto_editor/auto_editor_locator.dart';
+import 'package:gapless/features/engine/data/auto_editor/auto_editor_output_collector.dart';
 import 'package:gapless/features/engine/data/auto_editor/auto_editor_parsers.dart';
 import 'package:gapless/features/engine/data/auto_editor/v3_codec.dart';
 import 'package:gapless/features/engine/domain/engine_models.dart';
@@ -64,6 +65,7 @@ final class AutoEditorAdapter implements EnginePort {
           ],
           operation: 'levels',
           source: source,
+          retainStdout: true,
         );
         try {
           return AutoEditorParsers.parseLevels(
@@ -203,11 +205,12 @@ final class AutoEditorAdapter implements EnginePort {
     String sourcePath, {
     required String operation,
   }) async {
-    final output = await _run(context, [
-      'info',
-      sourcePath,
-      '--json',
-    ], operation: operation);
+    final output = await _run(
+      context,
+      ['info', sourcePath, '--json'],
+      operation: operation,
+      retainStdout: true,
+    );
     try {
       return AutoEditorParsers.parseInfoJson(output.stdout);
     } on FormatException catch (error) {
@@ -227,6 +230,7 @@ final class AutoEditorAdapter implements EnginePort {
     List<String> arguments, {
     required String operation,
     EngineStage? progressStage,
+    bool retainStdout = false,
   }) async {
     context.throwIfCancelled();
     final executable = await executableLocator.locate();
@@ -236,27 +240,29 @@ final class AutoEditorAdapter implements EnginePort {
     );
     context.attach(process);
     context.throwIfCancelled();
-    final stdout = process.stdoutLines.toList();
+    final output = AutoEditorOutputCollector(retainStdout: retainStdout);
+    final stdout = _collectLines(process.stdoutLines, onLine: output.addStdout);
     final stderr = _collectLines(
       process.stderrLines,
-      onLine: progressStage == null
-          ? null
-          : (line) {
-              final parsed = _parseProgress(line, progressStage);
-              if (parsed != null) {
-                context.report(
-                  parsed.stage,
-                  percent: parsed.percent,
-                  eta: parsed.eta,
-                );
-              }
-            },
+      onLine: (line) {
+        output.addStderr(line);
+        if (progressStage != null) {
+          final parsed = _parseProgress(line, progressStage);
+          if (parsed != null) {
+            context.report(
+              parsed.stage,
+              percent: parsed.percent,
+              eta: parsed.eta,
+            );
+          }
+        }
+      },
     );
     final exitCode = await process.exitCode;
-    final stdoutLines = await stdout;
-    final stderrLines = await stderr;
+    await stdout;
+    await stderr;
     context.throwIfCancelled();
-    final diagnostics = _boundedDiagnostics([...stderrLines, ...stdoutLines]);
+    final diagnostics = output.diagnostics;
     if (exitCode != 0) {
       throw EngineContractFailure(
         operation: operation,
@@ -265,10 +271,7 @@ final class AutoEditorAdapter implements EnginePort {
         diagnostics: diagnostics,
       );
     }
-    return _ProcessOutput(
-      stdout: stdoutLines.join('\n'),
-      diagnostics: diagnostics,
-    );
+    return _ProcessOutput(stdout: output.stdout, diagnostics: diagnostics);
   }
 
   Future<_ProcessOutput> _runForMedia(
@@ -276,9 +279,15 @@ final class AutoEditorAdapter implements EnginePort {
     List<String> arguments, {
     required String operation,
     required Uri source,
+    bool retainStdout = false,
   }) async {
     try {
-      return await _run(context, arguments, operation: operation);
+      return await _run(
+        context,
+        arguments,
+        operation: operation,
+        retainStdout: retainStdout,
+      );
     } on EngineContractFailure catch (failure) {
       if (failure.reason == EngineContractReason.unexpectedExit &&
           failure.diagnostics.any(
@@ -334,16 +343,13 @@ List<String> _encodingArguments(RenderPreset preset) => switch (preset) {
   ],
 };
 
-Future<List<String>> _collectLines(
+Future<void> _collectLines(
   Stream<String> stream, {
-  void Function(String line)? onLine,
+  required void Function(String line) onLine,
 }) async {
-  final result = <String>[];
   await for (final line in stream) {
-    result.add(line);
-    onLine?.call(line);
+    onLine(line);
   }
-  return result;
 }
 
 EngineProgress? _parseProgress(String line, EngineStage stage) {
@@ -492,6 +498,7 @@ final class _TaskContext {
   var _cancelled = false;
   Future<void>? _cancelFuture;
   Future<void>? _runningCancelFuture;
+  final _runningOrFinished = Completer<RunningProcess?>();
   final _finished = Completer<void>();
 
   void report(EngineStage stage, {double? percent, Duration? eta}) {
@@ -502,17 +509,21 @@ final class _TaskContext {
 
   void attach(RunningProcess process) {
     _running = process;
-    if (_cancelled) unawaited(_cancelRunning(process));
+    if (!_runningOrFinished.isCompleted) {
+      _runningOrFinished.complete(process);
+    }
   }
 
   Future<void> cancel() {
+    final cancellation = _cancelFuture;
+    if (cancellation != null) return cancellation;
     if (_finished.isCompleted) return Future<void>.value();
     _cancelled = true;
     return _cancelFuture ??= _cancelAndWait();
   }
 
   Future<void> _cancelAndWait() async {
-    final running = _running;
+    final running = _running ?? await _runningOrFinished.future;
     if (running != null) await _cancelRunning(running);
     await _finished.future;
   }
@@ -521,6 +532,9 @@ final class _TaskContext {
       _runningCancelFuture ??= process.cancel();
 
   void finish() {
+    if (!_runningOrFinished.isCompleted) {
+      _runningOrFinished.complete(null);
+    }
     if (!_finished.isCompleted) _finished.complete();
   }
 

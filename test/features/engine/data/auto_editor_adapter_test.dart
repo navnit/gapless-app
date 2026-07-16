@@ -516,6 +516,107 @@ void main() {
       expect(File('${temp.path}/delayed.v3').existsSync(), isFalse);
     },
   );
+
+  test(
+    'early cancel waits for later attached native cleanup after task finish',
+    () async {
+      final delayedRunner = DelayedProcessRunner();
+      final delayedAdapter = AutoEditorAdapter(
+        processRunner: delayedRunner,
+        executableLocator: const FakeExecutableLocator('/bundle/auto-editor'),
+        temporaryPathFactory: (extension) async =>
+            Uri.file('${temp.path}/native-cleanup$extension'),
+      );
+      final process = DelayedCancellationRunningProcess();
+      final task = delayedAdapter.render(
+        _renderRequest(
+          source: Uri.file('/absolute/source.mp4'),
+          destination: Uri.file('${temp.path}/native-cleanup.partial.mp4'),
+          preset: RenderPreset.balanced,
+        ),
+      );
+      await _waitFor(() => delayedRunner.requests.isNotEmpty);
+      final resultExpectation = expectLater(
+        task.result,
+        throwsA(isA<OperationCancelled>()),
+      );
+      var firstCancelCompleted = false;
+      var secondCancelCompleted = false;
+
+      final firstCancellation = task.cancel().then(
+        (_) => firstCancelCompleted = true,
+      );
+      final secondCancellation = task.cancel().then(
+        (_) => secondCancelCompleted = true,
+      );
+      delayedRunner.release(process);
+      await _waitFor(() => process.cancelCount == 1);
+      await resultExpectation;
+      var postFinishCancelCompleted = false;
+      final postFinishCancellation = task.cancel().then(
+        (_) => postFinishCancelCompleted = true,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(firstCancelCompleted, isFalse);
+      expect(secondCancelCompleted, isFalse);
+      expect(postFinishCancelCompleted, isFalse);
+      process.completeCancellation();
+      await Future.wait([
+        firstCancellation,
+        secondCancellation,
+        postFinishCancellation,
+      ]);
+      expect(process.cancelCount, 1);
+    },
+  );
+
+  test('cancel before task body starts completes without a process', () async {
+    final task = adapter.render(
+      _renderRequest(
+        source: Uri.file('/absolute/source.mp4'),
+        destination: Uri.file('${temp.path}/pre-body.partial.mp4'),
+        preset: RenderPreset.balanced,
+      ),
+    );
+    final resultExpectation = expectLater(
+      task.result,
+      throwsA(isA<OperationCancelled>()),
+    );
+
+    await task.cancel().timeout(const Duration(seconds: 1));
+
+    await resultExpectation;
+    expect(runner.requests, isEmpty);
+  });
+
+  test('cancel completes when a pending process start fails', () async {
+    final failingRunner = DelayedFailingProcessRunner();
+    final failingAdapter = AutoEditorAdapter(
+      processRunner: failingRunner,
+      executableLocator: const FakeExecutableLocator('/bundle/auto-editor'),
+      temporaryPathFactory: (extension) async =>
+          Uri.file('${temp.path}/start-failure$extension'),
+    );
+    final task = failingAdapter.render(
+      _renderRequest(
+        source: Uri.file('/absolute/source.mp4'),
+        destination: Uri.file('${temp.path}/start-failure.partial.mp4'),
+        preset: RenderPreset.balanced,
+      ),
+    );
+    await _waitFor(() => failingRunner.requests.isNotEmpty);
+    final resultExpectation = expectLater(
+      task.result,
+      throwsA(isA<StateError>()),
+    );
+
+    final cancellation = task.cancel();
+    failingRunner.fail(StateError('start failed'));
+    await cancellation.timeout(const Duration(seconds: 1));
+
+    await resultExpectation;
+  });
 }
 
 final class FakeExecutableLocator implements AutoEditorExecutableLocator {
@@ -555,6 +656,19 @@ final class DelayedProcessRunner implements ProcessRunner {
   }
 
   void release(RunningProcess process) => _release.complete(process);
+}
+
+final class DelayedFailingProcessRunner implements ProcessRunner {
+  final requests = <ProcessRequest>[];
+  final _release = Completer<RunningProcess>();
+
+  @override
+  Future<RunningProcess> start(ProcessRequest request) {
+    requests.add(request);
+    return _release.future;
+  }
+
+  void fail(Object error) => _release.completeError(error);
 }
 
 class FakeRunningProcess implements RunningProcess {
@@ -606,6 +720,23 @@ final class BlockingFakeRunningProcess extends FakeRunningProcess {
     await super.cancel();
     if (!_exit.isCompleted) _exit.complete(255);
   }
+}
+
+final class DelayedCancellationRunningProcess extends FakeRunningProcess {
+  final _exit = Completer<int>();
+  final _cancellation = Completer<void>();
+
+  @override
+  Future<int> get exitCode => _exit.future;
+
+  @override
+  Future<void> cancel() {
+    cancelCount++;
+    if (!_exit.isCompleted) _exit.complete(255);
+    return _cancellation.future;
+  }
+
+  void completeCancellation() => _cancellation.complete();
 }
 
 String _fixtureText(String name) =>
