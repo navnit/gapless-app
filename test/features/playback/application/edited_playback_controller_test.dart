@@ -224,6 +224,36 @@ void main() {
   );
 
   test(
+    'normalizes near-target trailing-cut feedback to the exact end',
+    () async {
+      player.delaySeeks = true;
+      final controller = create(
+        _timeline(10, [const _Part(8, 10, SegmentAction.cut)]),
+      );
+      final sources = <int>[];
+      final subscription = controller.sourcePositionUs.listen(sources.add);
+      await _settle();
+
+      player.emitPosition(_seconds(8) + 10000);
+      await _settle();
+      expect(player.seeks, [_seconds(10)]);
+
+      player.emitPosition(_seconds(10) - 20000);
+      player.emitPosition(_seconds(8) + 20000);
+      await _settle();
+      player.delaySeeks = false;
+      player.completeNextSeek();
+      await _settle();
+
+      expect(controller.currentSourceUs, _seconds(10));
+      expect(sources.last, _seconds(10));
+      expect(player.seeks, [_seconds(10)]);
+      expect(player.pauseCount, 1);
+      await subscription.cancel();
+    },
+  );
+
+  test(
     'retains a backward seek target across distant origin-side feedback',
     () async {
       final controller = create(_timeline(10, const []));

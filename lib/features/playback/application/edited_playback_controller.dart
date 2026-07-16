@@ -143,12 +143,13 @@ final class EditedPlaybackController {
   void _onPosition(int sourceUs) {
     if (_disposed) return;
     final clamped = _clampSource(sourceUs);
-    if (!_acceptPendingFeedback(clamped)) return;
-    _latestObservedSourceUs = clamped;
+    final accepted = _acceptedPendingFeedback(clamped);
+    if (accepted == null) return;
+    _latestObservedSourceUs = accepted;
     final generation = ++_generation;
     unawaited(
       _enqueue(
-        () => _reactToPosition(clamped, generation),
+        () => _reactToPosition(accepted, generation),
       ).then<void>((_) {}, onError: (Object _, StackTrace _) {}),
     );
   }
@@ -289,21 +290,21 @@ final class EditedPlaybackController {
   bool _withinTolerance(int firstUs, int secondUs) =>
       (firstUs - secondUs).abs() <= seekToleranceUs;
 
-  bool _acceptPendingFeedback(int sourceUs) {
+  int? _acceptedPendingFeedback(int sourceUs) {
     final pending = _pendingSeek;
-    if (pending == null) return true;
+    if (pending == null) return sourceUs;
     if (_withinTolerance(sourceUs, pending.targetUs)) {
       pending.targetObserved = true;
-      return true;
+      return pending.targetUs;
     }
     if (!pending.targetObserved) {
-      if (_withinTolerance(sourceUs, pending.originUs)) return false;
+      if (_withinTolerance(sourceUs, pending.originUs)) return null;
       _pendingSeek = null;
-      return true;
+      return sourceUs;
     }
-    if (pending.isStaleOriginSide(sourceUs, seekToleranceUs)) return false;
+    if (pending.isStaleOriginSide(sourceUs, seekToleranceUs)) return null;
     _pendingSeek = null;
-    return true;
+    return sourceUs;
   }
 
   bool _isCurrent(int generation) => !_disposed && generation == _generation;
