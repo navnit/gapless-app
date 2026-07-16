@@ -157,22 +157,10 @@ final class SettingsSidebar extends StatelessWidget {
             if (settings.inactiveBehavior ==
                 InactiveBehavior.fastForward) ...<Widget>[
               const SizedBox(height: 9),
-              TextFormField(
+              _FastForwardSpeedField(
                 key: const ValueKey<String>('fastForward.speed'),
-                initialValue: _compactNumber(settings.fastForwardRate),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                onFieldSubmitted: (value) {
-                  final parsed = double.tryParse(value);
-                  if (parsed != null) onFastForwardRateChanged(parsed);
-                },
-                decoration: const InputDecoration(
-                  labelText: 'Speed',
-                  suffixText: '×',
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                ),
+                value: settings.fastForwardRate,
+                onChanged: onFastForwardRateChanged,
               ),
             ],
             const SizedBox(height: 7),
@@ -213,6 +201,61 @@ final class SettingsSidebar extends StatelessWidget {
       ),
     );
   }
+}
+
+final class _FastForwardSpeedField extends StatefulWidget {
+  const _FastForwardSpeedField({
+    required this.value,
+    required this.onChanged,
+    super.key,
+  });
+
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  @override
+  State<_FastForwardSpeedField> createState() => _FastForwardSpeedFieldState();
+}
+
+final class _FastForwardSpeedFieldState extends State<_FastForwardSpeedField> {
+  late final TextEditingController _controller = TextEditingController(
+    text: _compactNumber(widget.value),
+  );
+
+  @override
+  void didUpdateWidget(_FastForwardSpeedField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value) {
+      _controller.value = TextEditingValue(
+        text: _compactNumber(widget.value),
+        selection: TextSelection.collapsed(
+          offset: _compactNumber(widget.value).length,
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => TextFormField(
+    controller: _controller,
+    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+    onFieldSubmitted: (value) {
+      final parsed = double.tryParse(value);
+      if (parsed != null) widget.onChanged(parsed);
+    },
+    decoration: const InputDecoration(
+      labelText: 'Speed',
+      suffixText: '×',
+      isDense: true,
+      border: OutlineInputBorder(),
+    ),
+  );
 }
 
 const _segmentedStyle = ButtonStyle(

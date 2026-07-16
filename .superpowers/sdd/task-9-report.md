@@ -43,6 +43,7 @@ mode only; it did not use `--update-goldens`.
 - `lib/features/editor/presentation/widgets/status_bar.dart`
 - `lib/app/gapless_app.dart`
 - `lib/app/app_dependencies.dart`
+- `lib/main.dart`
 - `pubspec.yaml`
 - `test/features/editor/presentation/editor_screen_test.dart`
 - `test/app/gapless_app_test.dart`
@@ -111,13 +112,69 @@ zoom, save-state, and export surfaces are legible in both themes.
 
 ## Known concerns and follow-up boundaries
 
-- `AppDependencies` now supplies real adapter types and injectable factories,
-  but `main.dart` still starts with `AppDependencies.empty()`. A production
-  native composition root remains follow-up work; the empty composition is
-  deliberately safe and does not claim to run media/process APIs.
+- Production now composes the pinned engine, native-owned process runner,
+  project/autosave/analysis/playback adapters, and deterministic desktop paths.
+  Task 12 still owns copying the composed native host and engine executables
+  into each release bundle; missing bundle binaries are reported at use time.
 - Task 9 emits a frozen MP4 export request only. Task 10 owns rendering the MP4
-  and reporting export progress/results.
+  and reporting export progress/results. Until then the production boundary
+  reports that the renderer is not composed instead of claiming success.
 - Changing a detection setting clears manual keep/remove choices before
   re-analysis because the current coordinator contract returns raw detection
   output. The UI states this explicitly, while undo/redo and manual-only edits
   preserve the no-reanalysis behavior.
+
+## Independent-review fixes
+
+The review of commit `f392563` returned lifecycle and composition findings.
+Each behavior was reproduced before its production fix:
+
+- Production composition RED failed to compile because
+  `AppDependencies.production`, `AppDirectories`, and `AppPlayback` did not
+  exist. GREEN builds a real, lazily exercised runtime without starting a
+  process during construction; `main()` awaits it instead of launching the
+  empty test harness.
+- Real recent-store RED threw `Unsupported operation: Cannot remove from an
+  unmodifiable list`. GREEN copies to a growable list and serializes startup
+  pruning with remember operations.
+- Manual-edit RED showed zero saved documents when playback reconciliation
+  threw. GREEN completes autosave first, preserves its accurate status, then
+  independently attempts playback reconciliation.
+- Relocation RED had no persisted document and retained stale source identity.
+  GREEN persists the resolved absolute path and correct project-relative path
+  before probe; playback, analysis, autosave, and export share that URI.
+- Fast-forward field RED retained `4` after state changed to `8`. GREEN uses a
+  controlled field synchronized from model changes, including undo and redo.
+- Controlled slow-probe RED ended on the first project after a second open.
+  GREEN uses operation generations, guarded probe/playback/save/recent
+  completions, request-correlated analysis updates, and autosave flush/dispose
+  handoff. A stale first analysis result is ignored while the second result is
+  accepted.
+- Export and probe failure REDs escaped their asynchronous boundaries. GREEN
+  records the failures in editor state without producing unhandled futures.
+
+Production playback now lazily creates `EditedPlaybackController` on the first
+effective timeline, updates it thereafter, applies Original/Edited mode, and
+disposes its subscriptions before the underlying media_kit adapter. The same
+adapter supplies the application's `VideoController`.
+
+### Review-fix verification
+
+Commands were run sequentially without rewriting goldens:
+
+```text
+dart format --output=none --set-exit-if-changed lib test
+Formatted 66 files (0 changed).
+
+flutter analyze
+No issues found.
+
+flutter test test/features/editor/presentation/editor_screen_test.dart test/app/gapless_app_test.dart --reporter compact
+32 tests passed.
+
+flutter test --reporter compact
+236 tests passed; 1 platform-specific test skipped.
+
+git diff --check
+Clean (exit 0, no output).
+```

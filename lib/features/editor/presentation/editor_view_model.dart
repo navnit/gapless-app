@@ -14,6 +14,7 @@ import 'package:gapless/features/project/application/autosave_controller.dart';
 import 'package:gapless/features/project/data/project_repository.dart';
 import 'package:gapless/features/project/domain/project_document.dart';
 import 'package:gapless/features/project/domain/source_reference.dart';
+import 'package:path/path.dart' as p;
 
 enum EditorPhase { empty, importing, analyzing, ready }
 
@@ -26,10 +27,18 @@ abstract interface class EditorFilePicker {
 }
 
 abstract interface class EditorAnalysisPort {
-  Stream<AnalysisState> get states;
+  Stream<EditorAnalysisUpdate> get updates;
   AnalysisState get state;
-  void request(ProjectDocument document);
+  void request(ProjectDocument document, {required int requestId});
+  void invalidate();
   Future<void> dispose();
+}
+
+final class EditorAnalysisUpdate {
+  const EditorAnalysisUpdate({required this.requestId, required this.state});
+
+  final int requestId;
+  final AnalysisState state;
 }
 
 abstract interface class RecentProjectsPort {
@@ -62,6 +71,7 @@ typedef AutosaveFactory = AutosaveController Function(Uri project);
 typedef DraftProjectUriFactory = Uri Function(Uri source);
 typedef TimelineChanged = Future<void> Function(EffectiveTimeline timeline);
 typedef PreviewModeChanged = Future<void> Function(PreviewMode mode);
+typedef RuntimeDisposer = Future<void> Function();
 
 final class EditorRuntime {
   const EditorRuntime({
@@ -78,6 +88,7 @@ final class EditorRuntime {
     required this.autosaveFactory,
     this.onTimelineChanged,
     this.onPreviewModeChanged,
+    this.disposeRuntime,
   });
 
   final EditorFilePicker picker;
@@ -93,6 +104,7 @@ final class EditorRuntime {
   final AutosaveFactory autosaveFactory;
   final TimelineChanged? onTimelineChanged;
   final PreviewModeChanged? onPreviewModeChanged;
+  final RuntimeDisposer? disposeRuntime;
 }
 
 @immutable
@@ -220,9 +232,16 @@ final class EditorViewModel extends ChangeNotifier {
 
   final EditorRuntime? runtime;
   AutosaveController? _autosave;
-  StreamSubscription<AnalysisState>? _analysisSubscription;
+  StreamSubscription<EditorAnalysisUpdate>? _analysisSubscription;
   StreamSubscription<int>? _positionSubscription;
   StreamSubscription<bool>? _playingSubscription;
+  Future<void> _recentsTail = Future<void>.value();
+  Future<void> _autosaveBarrier = Future<void>.value();
+  Future<void> _playbackTail = Future<void>.value();
+  EngineTask<MediaMetadata>? _probeTask;
+  _AnalysisRequestIdentity? _analysisRequest;
+  var _analysisRequestSequence = 0;
+  var _operationGeneration = 0;
   final List<_EditorCommand> _undo = <_EditorCommand>[];
   final List<_EditorCommand> _redo = <_EditorCommand>[];
   var _disposed = false;
@@ -233,8 +252,17 @@ final class EditorViewModel extends ChangeNotifier {
   Future<void> openVideo() async {
     final runtime = this.runtime;
     if (runtime == null) return;
+    final generation = _beginOpenOperation();
+    try {
+      await _openVideo(runtime, generation);
+    } on Object catch (error) {
+      _reportOperationFailure(generation, error);
+    }
+  }
+
+  Future<void> _openVideo(EditorRuntime runtime, int generation) async {
     final source = await runtime.picker.pickVideo();
-    if (source == null) return;
+    if (source == null || !_isOperationCurrent(generation)) return;
     _setState(
       const EditorState(
         phase: EditorPhase.importing,
@@ -243,14 +271,16 @@ final class EditorViewModel extends ChangeNotifier {
     );
 
     final fingerprint = await runtime.fingerprinter.fingerprint(source);
+    if (!_isOperationCurrent(generation)) return;
     final projectUri = runtime.draftProjectFor(source);
     final project = ProjectDocument(
       schemaVersion: ProjectDocument.currentSchemaVersion,
       appVersion: '1.0.0',
       source: SourceReference(
-        relativePath: source.pathSegments.isEmpty
-            ? source.toFilePath()
-            : source.pathSegments.last,
+        relativePath: p.relative(
+          source.toFilePath(),
+          from: p.dirname(projectUri.toFilePath()),
+        ),
         absolutePath: source.toFilePath(),
         fingerprint: fingerprint,
       ),
@@ -270,7 +300,6 @@ final class EditorViewModel extends ChangeNotifier {
         waveformHeight: 52,
       ),
     );
-    _autosave = runtime.autosaveFactory(projectUri);
     _setState(
       EditorState(
         phase: EditorPhase.importing,
@@ -280,11 +309,14 @@ final class EditorViewModel extends ChangeNotifier {
         message: 'Reading video metadata…',
       ),
     );
-    await _save(project);
+    await _save(project, generation: generation);
+    if (!_isOperationCurrent(generation)) return;
 
-    final metadata = await runtime.engine.probe(source).result;
-    await runtime.playback.open(source);
-    await _rememberRecent(projectUri);
+    final metadata = await _probeSource(source, generation);
+    if (metadata == null) return;
+    if (!await _openPlayback(source, generation)) return;
+    await _rememberRecent(projectUri, generation: generation);
+    if (!_isOperationCurrent(generation)) return;
     _undo.clear();
     _redo.clear();
 
@@ -307,14 +339,27 @@ final class EditorViewModel extends ChangeNotifier {
         message: 'Reading audio loudness…',
       ),
     );
-    runtime.analysis.request(project);
+    _requestAnalysis(project, projectUri, generation);
   }
 
   Future<void> openProject([Uri? project]) async {
     final runtime = this.runtime;
     if (runtime == null) return;
+    final generation = _beginOpenOperation();
+    try {
+      await _openProject(runtime, generation, project);
+    } on Object catch (error) {
+      _reportOperationFailure(generation, error);
+    }
+  }
+
+  Future<void> _openProject(
+    EditorRuntime runtime,
+    int generation,
+    Uri? project,
+  ) async {
     final selected = project ?? await runtime.picker.pickProject();
-    if (selected == null) return;
+    if (selected == null || !_isOperationCurrent(generation)) return;
     _setState(
       const EditorState(
         phase: EditorPhase.importing,
@@ -322,10 +367,12 @@ final class EditorViewModel extends ChangeNotifier {
       ),
     );
     final document = await runtime.projects.load(selected);
+    if (!_isOperationCurrent(generation)) return;
     final source = await runtime.sourceResolver.resolve(
       selected,
       document.source,
     );
+    if (!_isOperationCurrent(generation)) return;
     if (source == null) {
       _setState(
         EditorState(
@@ -338,24 +385,50 @@ final class EditorViewModel extends ChangeNotifier {
       );
       return;
     }
-    final metadata = await runtime.engine.probe(source).result;
-    await runtime.playback.open(source);
+    final resolvedPath = source.toFilePath();
+    final resolvedDocument = _copyProject(
+      document,
+      sourceReference: SourceReference(
+        relativePath: p.relative(
+          resolvedPath,
+          from: p.dirname(selected.toFilePath()),
+        ),
+        absolutePath: resolvedPath,
+        fingerprint: document.source.fingerprint,
+      ),
+    );
     _autosave = runtime.autosaveFactory(selected);
+    _setState(
+      EditorState(
+        phase: EditorPhase.importing,
+        project: resolvedDocument,
+        projectUri: selected,
+        saveStatus: EditorSaveStatus.idle,
+        message: 'Saving relocated source…',
+        recentProjects: _state.recentProjects,
+      ),
+    );
+    await _save(resolvedDocument, generation: generation);
+    if (!_isOperationCurrent(generation)) return;
+    final metadata = await _probeSource(source, generation);
+    if (metadata == null) return;
+    if (!await _openPlayback(source, generation)) return;
     _undo.clear();
     _redo.clear();
-    await _rememberRecent(selected);
+    await _rememberRecent(selected, generation: generation);
+    if (!_isOperationCurrent(generation)) return;
 
     final timeline = EffectiveTimeline.compose(
       durationUs: metadata.durationUs,
-      detected: document.detectedSegments,
-      overrides: document.manualOverrides,
+      detected: resolvedDocument.detectedSegments,
+      overrides: resolvedDocument.manualOverrides,
     );
     if (!metadata.hasAudio &&
-        document.settings.method == AnalysisMethod.audio) {
+        resolvedDocument.settings.method == AnalysisMethod.audio) {
       _setState(
         EditorState(
           phase: EditorPhase.ready,
-          project: document,
+          project: resolvedDocument,
           projectUri: selected,
           metadata: metadata,
           timeline: timeline,
@@ -370,7 +443,7 @@ final class EditorViewModel extends ChangeNotifier {
     _setState(
       EditorState(
         phase: EditorPhase.analyzing,
-        project: document,
+        project: resolvedDocument,
         projectUri: selected,
         metadata: metadata,
         timeline: timeline,
@@ -379,8 +452,13 @@ final class EditorViewModel extends ChangeNotifier {
         recentProjects: _state.recentProjects,
       ),
     );
-    runtime.analysis.request(
-      _copyProject(document, manualOverrides: const <TimelineSegment>[]),
+    _requestAnalysis(
+      _copyProject(
+        resolvedDocument,
+        manualOverrides: const <TimelineSegment>[],
+      ),
+      selected,
+      generation,
     );
   }
 
@@ -395,46 +473,58 @@ final class EditorViewModel extends ChangeNotifier {
     final runtime = this.runtime;
     final project = _state.project;
     if (runtime == null || project == null) return;
+    final generation = _operationGeneration;
     final sourceName = project.source.relativePath;
     final dot = sourceName.lastIndexOf('.');
     final stem = dot > 0 ? sourceName.substring(0, dot) : sourceName;
     final selected = await runtime.picker.saveProject(
       suggestedName: '$stem.gapless',
     );
-    if (selected == null) return;
+    if (selected == null || !_isOperationCurrent(generation)) return;
     final selectedPath = selected.toFilePath();
     final target = selectedPath.toLowerCase().endsWith('.gapless')
         ? selected
         : Uri.file('$selectedPath.gapless');
-    await _autosave?.dispose();
-    _autosave = runtime.autosaveFactory(target);
+    final previous = _autosave;
+    _autosave = null;
+    await _queueAutosaveDisposal(previous);
+    if (!_isOperationCurrent(generation)) return;
     _setState(
       _state.copyWith(projectUri: target, saveStatus: EditorSaveStatus.idle),
     );
-    await _save(project);
+    await _save(project, generation: generation);
     if (_state.saveStatus == EditorSaveStatus.saved) {
-      await _rememberRecent(target);
+      await _rememberRecent(target, generation: generation);
     }
   }
 
   Future<void> export() async {
     final runtime = this.runtime;
     final project = _state.project;
+    final projectUri = _state.projectUri;
     final metadata = _state.metadata;
     final timeline = _state.timeline;
+    final generation = _operationGeneration;
     if (runtime == null ||
         project == null ||
+        projectUri == null ||
         metadata == null ||
         timeline == null) {
       return;
     }
-    await runtime.exporter.request(
-      EditorExportRequest(
-        source: Uri.file(project.source.absolutePath),
-        metadata: metadata,
-        timeline: timeline,
-      ),
-    );
+    try {
+      await runtime.exporter.request(
+        EditorExportRequest(
+          source: Uri.file(project.source.absolutePath),
+          metadata: metadata,
+          timeline: timeline,
+        ),
+      );
+    } on Object catch (error) {
+      if (_isOperationCurrent(generation) && _state.projectUri == projectUri) {
+        _setState(_state.copyWith(message: error.toString()));
+      }
+    }
   }
 
   Future<void> togglePlayback() async {
@@ -448,19 +538,21 @@ final class EditorViewModel extends ChangeNotifier {
   }
 
   Future<void> loadRecentProjects() async {
-    final recents = runtime?.recents;
-    if (recents == null) return;
-    final stored = await recents.load();
-    final accessible = <Uri>[];
-    for (final project in stored) {
-      if (await recents.exists(project)) accessible.add(project);
-    }
-    if (accessible.length != stored.length) {
-      await recents.save(accessible);
-    }
-    _setState(
-      _state.copyWith(recentProjects: List<Uri>.unmodifiable(accessible)),
-    );
+    await _serializeRecents(() async {
+      final recents = runtime?.recents;
+      if (recents == null) return;
+      final stored = await recents.load();
+      final accessible = <Uri>[];
+      for (final project in stored) {
+        if (await recents.exists(project)) accessible.add(project);
+      }
+      if (accessible.length != stored.length) {
+        await recents.save(accessible);
+      }
+      _setState(
+        _state.copyWith(recentProjects: List<Uri>.unmodifiable(accessible)),
+      );
+    });
   }
 
   Future<void> handleTimelineIntent(TimelineIntent intent) async {
@@ -606,7 +698,12 @@ final class EditorViewModel extends ChangeNotifier {
             : 'Reading audio loudness…',
       ),
     );
-    if (!audioUnavailable) runtime?.analysis.request(updated);
+    if (!audioUnavailable) {
+      final projectUri = _state.projectUri;
+      if (projectUri != null) {
+        _requestAnalysis(updated, projectUri, _operationGeneration);
+      }
+    }
     await _save(updated);
   }
 
@@ -699,8 +796,8 @@ final class EditorViewModel extends ChangeNotifier {
     );
     _setState(_state.copyWith(project: updated, timeline: effective));
     _recordCommand(project, updated, detectionChanged: false);
-    await runtime?.onTimelineChanged?.call(effective);
     await _save(updated);
+    await runtime?.onTimelineChanged?.call(effective);
   }
 
   Future<void> _restoreCommand(
@@ -722,13 +819,19 @@ final class EditorViewModel extends ChangeNotifier {
       ),
     );
     if (detectionChanged) {
-      runtime?.analysis.request(
-        _copyProject(project, manualOverrides: const <TimelineSegment>[]),
-      );
+      final projectUri = _state.projectUri;
+      if (projectUri != null) {
+        _requestAnalysis(
+          _copyProject(project, manualOverrides: const <TimelineSegment>[]),
+          projectUri,
+          _operationGeneration,
+        );
+      }
+      await _save(project);
     } else {
+      await _save(project);
       await runtime?.onTimelineChanged?.call(effective);
     }
-    await _save(project);
   }
 
   void _recordCommand(
@@ -754,15 +857,38 @@ final class EditorViewModel extends ChangeNotifier {
     if (save) await _save(project);
   }
 
-  Future<void> _save(ProjectDocument document) async {
+  Future<void> _save(ProjectDocument document, {int? generation}) async {
     final runtime = this.runtime;
+    final requestedGeneration = generation ?? _operationGeneration;
     final projectUri = _state.projectUri;
-    if (runtime == null || projectUri == null) return;
-    final autosave = _autosave ??= runtime.autosaveFactory(projectUri);
+    if (runtime == null ||
+        projectUri == null ||
+        !_isOperationCurrent(requestedGeneration)) {
+      return;
+    }
+    await _autosaveBarrier;
+    if (!_isOperationCurrent(requestedGeneration) ||
+        _state.projectUri != projectUri) {
+      return;
+    }
+    var autosave = _autosave;
+    if (autosave == null || autosave.project != projectUri) {
+      if (autosave != null) await _queueAutosaveDisposal(autosave);
+      if (!_isOperationCurrent(requestedGeneration) ||
+          _state.projectUri != projectUri) {
+        return;
+      }
+      autosave = runtime.autosaveFactory(projectUri);
+      _autosave = autosave;
+    }
     _setState(_state.copyWith(saveStatus: EditorSaveStatus.saving));
     autosave.markChanged(document);
     await autosave.flush();
-    if (_disposed) return;
+    if (!_isOperationCurrent(requestedGeneration) ||
+        !identical(_autosave, autosave) ||
+        _state.projectUri != projectUri) {
+      return;
+    }
     final status = autosave.status;
     _setState(
       _state.copyWith(
@@ -773,15 +899,122 @@ final class EditorViewModel extends ChangeNotifier {
     );
   }
 
-  Future<void> _rememberRecent(Uri project) async {
-    final recents = runtime?.recents;
-    if (recents == null) return;
-    final values = await recents.load();
-    values.remove(project);
-    values.insert(0, project);
-    final bounded = values.take(10).toList(growable: false);
-    await recents.save(bounded);
-    _setState(_state.copyWith(recentProjects: List<Uri>.unmodifiable(bounded)));
+  Future<void> _rememberRecent(Uri project, {int? generation}) async {
+    await _serializeRecents(() async {
+      final recents = runtime?.recents;
+      if (recents == null) return;
+      if (generation != null && !_isOperationCurrent(generation)) return;
+      final values = List<Uri>.of(await recents.load());
+      if (generation != null && !_isOperationCurrent(generation)) return;
+      values.remove(project);
+      values.insert(0, project);
+      final bounded = values.take(10).toList(growable: false);
+      await recents.save(bounded);
+      if (generation != null && !_isOperationCurrent(generation)) return;
+      _setState(
+        _state.copyWith(recentProjects: List<Uri>.unmodifiable(bounded)),
+      );
+    });
+  }
+
+  Future<void> _serializeRecents(Future<void> Function() operation) {
+    final result = _recentsTail.then((_) => operation());
+    _recentsTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
+  int _beginOpenOperation() {
+    final generation = ++_operationGeneration;
+    _analysisRequest = null;
+    runtime?.analysis.invalidate();
+    final previousAutosave = _autosave;
+    _autosave = null;
+    _queueAutosaveDisposal(previousAutosave);
+    final probe = _probeTask;
+    _probeTask = null;
+    if (probe != null) {
+      unawaited(
+        probe.cancel().then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+      );
+    }
+    return generation;
+  }
+
+  bool _isOperationCurrent(int generation) =>
+      !_disposed && generation == _operationGeneration;
+
+  void _reportOperationFailure(int generation, Object error) {
+    if (!_isOperationCurrent(generation)) return;
+    _setState(
+      _state.copyWith(
+        phase: _state.project == null ? EditorPhase.empty : EditorPhase.ready,
+        message: error.toString(),
+      ),
+    );
+  }
+
+  Future<void> _queueAutosaveDisposal(AutosaveController? autosave) {
+    final previous = _autosaveBarrier;
+    final result = previous.then((_) async {
+      if (autosave == null) return;
+      try {
+        await autosave.flush();
+      } on StateError {
+        // A controller already disposed by a concurrent shutdown is finished.
+      } finally {
+        await autosave.dispose();
+      }
+    });
+    _autosaveBarrier = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
+  Future<MediaMetadata?> _probeSource(Uri source, int generation) async {
+    if (!_isOperationCurrent(generation)) return null;
+    final task = runtime!.engine.probe(source);
+    _probeTask = task;
+    try {
+      final metadata = await task.result;
+      return _isOperationCurrent(generation) ? metadata : null;
+    } finally {
+      if (identical(_probeTask, task)) _probeTask = null;
+    }
+  }
+
+  Future<bool> _openPlayback(Uri source, int generation) {
+    final result = _playbackTail.then((_) async {
+      if (!_isOperationCurrent(generation)) return false;
+      await runtime!.playback.open(source);
+      return _isOperationCurrent(generation);
+    });
+    _playbackTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
+  void _requestAnalysis(
+    ProjectDocument document,
+    Uri projectUri,
+    int generation,
+  ) {
+    if (!_isOperationCurrent(generation)) return;
+    final requestId = ++_analysisRequestSequence;
+    _analysisRequest = _AnalysisRequestIdentity(
+      requestId: requestId,
+      generation: generation,
+      projectUri: projectUri,
+      source: document.source,
+      settings: document.settings,
+    );
+    runtime?.analysis.request(document, requestId: requestId);
   }
 
   void _attachRuntime() {
@@ -789,7 +1022,7 @@ final class EditorViewModel extends ChangeNotifier {
     if (_state.projectUri case final project?) {
       _autosave = runtime.autosaveFactory(project);
     }
-    _analysisSubscription = runtime.analysis.states.listen(_onAnalysisState);
+    _analysisSubscription = runtime.analysis.updates.listen(_onAnalysisUpdate);
     _positionSubscription = runtime.playback.positionUs.listen((positionUs) {
       if (!_disposed) _setState(_state.copyWith(sourcePositionUs: positionUs));
     });
@@ -798,8 +1031,20 @@ final class EditorViewModel extends ChangeNotifier {
     });
   }
 
-  void _onAnalysisState(AnalysisState analysis) {
+  void _onAnalysisUpdate(EditorAnalysisUpdate update) {
     if (_disposed) return;
+    final request = _analysisRequest;
+    final currentProject = _state.project;
+    if (request == null ||
+        update.requestId != request.requestId ||
+        !_isOperationCurrent(request.generation) ||
+        _state.projectUri != request.projectUri ||
+        currentProject == null ||
+        currentProject.source != request.source ||
+        currentProject.settings != request.settings) {
+      return;
+    }
+    final analysis = update.state;
     switch (analysis) {
       case AnalysisIdle():
         break;
@@ -837,8 +1082,22 @@ final class EditorViewModel extends ChangeNotifier {
             timeline: effective,
           ),
         );
-        unawaited(runtime?.onTimelineChanged?.call(effective));
-        unawaited(_save(updated));
+        final timelineChanged = runtime?.onTimelineChanged;
+        if (timelineChanged != null) {
+          unawaited(
+            timelineChanged(effective).then<void>(
+              (_) {},
+              onError: (Object error, StackTrace _) {
+                if (_isOperationCurrent(request.generation)) {
+                  _setState(
+                    _state.copyWith(message: 'Playback update failed: $error'),
+                  );
+                }
+              },
+            ),
+          );
+        }
+        unawaited(_save(updated, generation: request.generation));
       case AnalysisFailed(:final failure):
         _setState(_state.copyWith(message: failure.toString()));
     }
@@ -854,6 +1113,16 @@ final class EditorViewModel extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _operationGeneration += 1;
+    _analysisRequest = null;
+    runtime?.analysis.invalidate();
+    final probe = _probeTask;
+    _probeTask = null;
+    if (probe != null) {
+      unawaited(
+        probe.cancel().then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+      );
+    }
     unawaited(_disposeOwned());
     super.dispose();
   }
@@ -864,11 +1133,19 @@ final class EditorViewModel extends ChangeNotifier {
       if (_positionSubscription != null) _positionSubscription!.cancel(),
       if (_playingSubscription != null) _playingSubscription!.cancel(),
     ]);
-    await _autosave?.dispose();
+    final autosave = _autosave;
+    _autosave = null;
+    await _queueAutosaveDisposal(autosave);
+    await Future.wait<void>([_autosaveBarrier, _playbackTail, _recentsTail]);
     final runtime = this.runtime;
     if (runtime != null) {
-      await runtime.analysis.dispose();
-      await runtime.playback.dispose();
+      final disposeRuntime = runtime.disposeRuntime;
+      if (disposeRuntime != null) {
+        await disposeRuntime();
+      } else {
+        await runtime.analysis.dispose();
+        await runtime.playback.dispose();
+      }
     }
   }
 }
@@ -885,6 +1162,22 @@ final class _EditorCommand {
   final bool detectionChanged;
 }
 
+final class _AnalysisRequestIdentity {
+  const _AnalysisRequestIdentity({
+    required this.requestId,
+    required this.generation,
+    required this.projectUri,
+    required this.source,
+    required this.settings,
+  });
+
+  final int requestId;
+  final int generation;
+  final Uri projectUri;
+  final SourceReference source;
+  final AnalysisSettings settings;
+}
+
 String _progressMessage(EngineProgress progress) => switch (progress.stage) {
   EngineStage.probing => 'Reading video metadata…',
   EngineStage.analyzing => 'Reading audio loudness…',
@@ -895,6 +1188,7 @@ String _progressMessage(EngineProgress progress) => switch (progress.stage) {
 
 ProjectDocument _copyProject(
   ProjectDocument source, {
+  SourceReference? sourceReference,
   AnalysisSettings? settings,
   List<TimelineSegment>? detectedSegments,
   List<TimelineSegment>? manualOverrides,
@@ -902,7 +1196,7 @@ ProjectDocument _copyProject(
 }) => ProjectDocument(
   schemaVersion: source.schemaVersion,
   appVersion: source.appVersion,
-  source: source.source,
+  source: sourceReference ?? source.source,
   settings: settings ?? source.settings,
   detectedSegments: detectedSegments ?? source.detectedSegments,
   manualOverrides: manualOverrides ?? source.manualOverrides,

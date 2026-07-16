@@ -127,6 +127,34 @@ void main() {
   );
 
   test(
+    'manual timeline toggles persist before playback reconciliation fails',
+    () async {
+      final analysis = _FakeAnalysis();
+      final store = _MemoryProjectStore();
+      final viewModel = EditorViewModel(
+        initialState: _readyState(),
+        runtime: _runtime(
+          analysis: analysis,
+          store: store,
+          onTimelineChanged: (_) async {
+            throw StateError('playback reconciliation failed');
+          },
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      await expectLater(
+        viewModel.handleTimelineIntent(ToggleSegmentIntent(_segments[1].range)),
+        throwsStateError,
+      );
+
+      expect(store.savedDocuments, hasLength(1));
+      expect(store.savedDocuments.single.manualOverrides, hasLength(1));
+      expect(viewModel.state.saveStatus, EditorSaveStatus.saved);
+    },
+  );
+
+  test(
     'detection settings clear manual choices and request analysis',
     () async {
       final analysis = _FakeAnalysis();
@@ -219,6 +247,23 @@ void main() {
     },
   );
 
+  test('import probe failures are contained and reported', () async {
+    final viewModel = EditorViewModel(
+      initialState: const EditorState.empty(),
+      runtime: _runtime(
+        analysis: _FakeAnalysis(),
+        store: _MemoryProjectStore(),
+        picker: _FakePicker(video: Uri.file('/videos/broken.mp4')),
+        engine: _FailingProbeEngine(),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.openVideo();
+
+    expect(viewModel.state.message, contains('probe failed'));
+  });
+
   test('save as enforces gapless and retry recovers a failed save', () async {
     final analysis = _FakeAnalysis();
     final store = _MemoryProjectStore();
@@ -268,6 +313,26 @@ void main() {
       expect(viewModel.canUndo, isFalse);
     },
   );
+
+  test('export boundary failures are reported without escaping', () async {
+    final exporter = _FakeExporter(
+      failure: UnsupportedError('The MP4 renderer is not composed yet.'),
+    );
+    final viewModel = EditorViewModel(
+      initialState: _readyState(),
+      runtime: _runtime(
+        analysis: _FakeAnalysis(),
+        store: _MemoryProjectStore(),
+        exporter: exporter,
+      ),
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.export();
+
+    expect(exporter.requests, hasLength(1));
+    expect(viewModel.state.message, contains('MP4 renderer'));
+  });
 
   test('recent projects lazily prune inaccessible entries only', () async {
     final analysis = _FakeAnalysis();
@@ -379,6 +444,41 @@ void main() {
     expect(playback.playCalls, 1);
   });
 
+  testWidgets('fast-forward speed field follows undo and redo state', (
+    tester,
+  ) async {
+    final analysis = _FakeAnalysis();
+    final viewModel = EditorViewModel(
+      initialState: _readyFastForwardState(),
+      runtime: _runtime(analysis: analysis, store: _MemoryProjectStore()),
+    );
+    addTearDown(viewModel.dispose);
+    await _pumpViewModel(tester, viewModel);
+
+    String speedText() => tester
+        .widget<EditableText>(
+          find.descendant(
+            of: find.byKey(const ValueKey<String>('fastForward.speed')),
+            matching: find.byType(EditableText),
+          ),
+        )
+        .controller
+        .text;
+
+    expect(speedText(), '4');
+    await viewModel.setFastForwardRate(8);
+    await tester.pump();
+    expect(speedText(), '8');
+
+    await viewModel.undo();
+    await tester.pump();
+    expect(speedText(), '4');
+
+    await viewModel.redo();
+    await tester.pump();
+    expect(speedText(), '8');
+  });
+
   test(
     'open project resolves source then probes plays analyzes and remembers',
     () async {
@@ -412,6 +512,168 @@ void main() {
     },
   );
 
+  test(
+    'relocated project persists and consistently uses the resolved source',
+    () async {
+      final analysis = _FakeAnalysis();
+      final store = _MemoryProjectStore();
+      final projectUri = Uri.file('/projects/archive/interview.gapless');
+      final resolved = Uri.file('/projects/media/interview.mp4');
+      final original = _readyState().project!;
+      store.loaded[projectUri] = ProjectDocument(
+        schemaVersion: original.schemaVersion,
+        appVersion: original.appVersion,
+        source: SourceReference(
+          relativePath: 'missing/interview.mp4',
+          absolutePath: '/missing/interview.mp4',
+          fingerprint: original.source.fingerprint,
+        ),
+        settings: original.settings,
+        detectedSegments: original.detectedSegments,
+        manualOverrides: original.manualOverrides,
+        ui: original.ui,
+      );
+      final playback = _FakePlayback();
+      final exporter = _FakeExporter();
+      final viewModel = EditorViewModel(
+        initialState: const EditorState.empty(),
+        runtime: _runtime(
+          analysis: analysis,
+          store: store,
+          playback: playback,
+          exporter: exporter,
+          sourceResolver: _FakeSourceResolver(resolved: resolved),
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.openProject(projectUri);
+      await viewModel.export();
+
+      final persistedSource = store.savedDocuments.last.source;
+      expect(persistedSource.absolutePath, resolved.toFilePath());
+      expect(persistedSource.relativePath, '../media/interview.mp4');
+      expect(playback.opened, <Uri>[resolved]);
+      expect(analysis.requests.single.source, persistedSource);
+      expect(exporter.requests.single.source, resolved);
+    },
+  );
+
+  test('a slow first project cannot replace a newer opened project', () async {
+    final firstProject = Uri.file('/projects/first.gapless');
+    final secondProject = Uri.file('/projects/second.gapless');
+    final firstSource = Uri.file('/videos/first.mp4');
+    final secondSource = Uri.file('/videos/second.mp4');
+    final store = _MemoryProjectStore()
+      ..loaded[firstProject] = _projectWithSource(firstSource, 'b')
+      ..loaded[secondProject] = _projectWithSource(secondSource, 'c');
+    final engine = _ControlledProbeEngine()
+      ..complete(secondSource, _readyState().metadata!);
+    final analysis = _FakeAnalysis();
+    final playback = _FakePlayback();
+    final recents = _FakeRecents();
+    final viewModel = EditorViewModel(
+      initialState: const EditorState.empty(),
+      runtime: _runtime(
+        analysis: analysis,
+        store: store,
+        engine: engine,
+        playback: playback,
+        recents: recents,
+      ),
+    );
+    addTearDown(viewModel.dispose);
+
+    final firstOpen = viewModel.openProject(firstProject);
+    await engine.waitUntilProbed(firstSource);
+    await viewModel.openProject(secondProject);
+    engine.complete(firstSource, _readyState().metadata!);
+    await firstOpen;
+
+    expect(viewModel.state.projectUri, secondProject);
+    expect(viewModel.state.project!.source.absolutePath, secondSource.path);
+    expect(playback.opened, <Uri>[secondSource]);
+    expect(
+      analysis.requests.map((request) => request.source.absolutePath),
+      <String>[secondSource.path],
+    );
+    expect(recents.values, <Uri>[secondProject]);
+  });
+
+  test(
+    'analysis updates are correlated with their requested project',
+    () async {
+      final firstProject = Uri.file('/projects/analysis-first.gapless');
+      final secondProject = Uri.file('/projects/analysis-second.gapless');
+      final firstSource = Uri.file('/videos/analysis-first.mp4');
+      final secondSource = Uri.file('/videos/analysis-second.mp4');
+      final store = _MemoryProjectStore()
+        ..loaded[firstProject] = _projectWithSource(firstSource, 'd')
+        ..loaded[secondProject] = _projectWithSource(secondSource, 'e');
+      final analysis = _FakeAnalysis();
+      final viewModel = EditorViewModel(
+        initialState: const EditorState.empty(),
+        runtime: _runtime(analysis: analysis, store: store),
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.openProject(firstProject);
+      final firstRequest = analysis.requests.single;
+      await viewModel.openProject(secondProject);
+      final secondRequest = analysis.requests.last;
+
+      analysis.emitFor(
+        firstRequest,
+        AnalysisReady(_readyState().timeline!, _readyState().levels!),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(viewModel.state.projectUri, secondProject);
+      expect(viewModel.state.phase, EditorPhase.analyzing);
+
+      analysis.emitFor(
+        secondRequest,
+        AnalysisReady(_readyState().timeline!, _readyState().levels!),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(viewModel.state.projectUri, secondProject);
+      expect(viewModel.state.phase, EditorPhase.ready);
+    },
+  );
+
+  test('project switches flush and dispose the previous autosave', () async {
+    final initial = _readyState();
+    final nextProject = Uri.file('/projects/autosave-next.gapless');
+    final nextSource = Uri.file('/videos/autosave-next.mp4');
+    final store = _MemoryProjectStore()
+      ..loaded[nextProject] = _projectWithSource(nextSource, 'f');
+    final controllers = <AutosaveController>[];
+    final viewModel = EditorViewModel(
+      initialState: initial,
+      runtime: _runtime(
+        analysis: _FakeAnalysis(),
+        store: store,
+        autosaveFactory: (project) {
+          final controller = AutosaveController(
+            project: project,
+            store: store,
+            delay: const Duration(days: 1),
+          );
+          controllers.add(controller);
+          return controller;
+        },
+      ),
+    );
+    addTearDown(viewModel.dispose);
+    controllers.single.markChanged(initial.project!);
+
+    await viewModel.openProject(nextProject);
+
+    expect(controllers.first.status, isA<AutosaveDisposed>());
+    expect(store.savedUris, contains(initial.projectUri));
+    expect(viewModel.state.projectUri, nextProject);
+    expect(controllers.last.project, nextProject);
+  });
+
   test('recent project preferences use versioned JSON', () async {
     final directory = await Directory.systemTemp.createTemp('gapless-recents-');
     addTearDown(() => directory.delete(recursive: true));
@@ -429,6 +691,42 @@ void main() {
     expect(json['schemaVersion'], 1);
     expect(json['projects'], projects.map((uri) => uri.toString()).toList());
   });
+
+  test(
+    'import with the real recent store reaches analysis and remembers the draft',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'gapless-real-recents-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final recents = JsonRecentProjectsStore(
+        File('${directory.path}/recent-projects.json'),
+      );
+      final existing = Uri.file('${directory.path}/existing.gapless');
+      await File.fromUri(existing).create();
+      await recents.save(<Uri>[existing]);
+      final analysis = _FakeAnalysis();
+      final source = Uri.file('/videos/real-recents.mp4');
+      final viewModel = EditorViewModel(
+        initialState: const EditorState.empty(),
+        runtime: _runtime(
+          analysis: analysis,
+          store: _MemoryProjectStore(),
+          picker: _FakePicker(video: source),
+          recents: recents,
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.openVideo();
+
+      expect(analysis.requests, hasLength(1));
+      expect(await recents.load(), <Uri>[
+        Uri.file('/videos/real-recents.gapless'),
+        existing,
+      ]);
+    },
+  );
 
   testWidgets('matches approved dark studio at 1280x832', (tester) async {
     await _pumpGolden(tester, Brightness.dark);
@@ -571,6 +869,27 @@ EditorState _readyState() {
   );
 }
 
+ProjectDocument _projectWithSource(Uri source, String fingerprintCharacter) {
+  final project = _readyState().project!;
+  return ProjectDocument(
+    schemaVersion: project.schemaVersion,
+    appVersion: project.appVersion,
+    source: SourceReference(
+      relativePath: source.pathSegments.last,
+      absolutePath: source.toFilePath(),
+      fingerprint: SourceFingerprint(
+        size: project.source.fingerprint.size,
+        modifiedAtUtc: project.source.fingerprint.modifiedAtUtc,
+        sampledSha256: fingerprintCharacter * 64,
+      ),
+    ),
+    settings: project.settings,
+    detectedSegments: project.detectedSegments,
+    manualOverrides: project.manualOverrides,
+    ui: project.ui,
+  );
+}
+
 EditorState _readyStateWithManualOverride() {
   final state = _readyState();
   final manual = TimelineSegment(
@@ -664,11 +983,13 @@ EditorRuntime _runtime({
   required _MemoryProjectStore store,
   _FakePicker? picker,
   _FakeFingerprinter? fingerprinter,
-  _FakeEngine? engine,
+  EnginePort? engine,
   _FakePlayback? playback,
   _FakeExporter? exporter,
-  _FakeRecents? recents,
+  RecentProjectsPort? recents,
   _FakeSourceResolver? sourceResolver,
+  TimelineChanged? onTimelineChanged,
+  AutosaveFactory? autosaveFactory,
 }) => EditorRuntime(
   picker: picker ?? _FakePicker(),
   fingerprinter: fingerprinter ?? _FakeFingerprinter(),
@@ -682,24 +1003,44 @@ EditorRuntime _runtime({
   draftProjectFor: (source) => Uri.file(
     '${source.toFilePath().replaceFirst(RegExp(r'\.[^.]+$'), '')}.gapless',
   ),
-  autosaveFactory: (project) =>
-      AutosaveController(project: project, store: store, delay: Duration.zero),
+  autosaveFactory:
+      autosaveFactory ??
+      (project) => AutosaveController(
+        project: project,
+        store: store,
+        delay: Duration.zero,
+      ),
+  onTimelineChanged: onTimelineChanged,
 );
 
 final class _FakeAnalysis implements EditorAnalysisPort {
   final requests = <ProjectDocument>[];
+  final _requestIds = <ProjectDocument, int>{};
+  final _updates = StreamController<EditorAnalysisUpdate>.broadcast(sync: true);
 
   @override
   AnalysisState get state => const AnalysisIdle();
 
   @override
-  Stream<AnalysisState> get states => const Stream<AnalysisState>.empty();
+  Stream<EditorAnalysisUpdate> get updates => _updates.stream;
 
   @override
-  void request(ProjectDocument document) => requests.add(document);
+  void request(ProjectDocument document, {required int requestId}) {
+    requests.add(document);
+    _requestIds[document] = requestId;
+  }
 
   @override
-  Future<void> dispose() async {}
+  void invalidate() {}
+
+  void emitFor(ProjectDocument document, AnalysisState state) {
+    _updates.add(
+      EditorAnalysisUpdate(requestId: _requestIds[document]!, state: state),
+    );
+  }
+
+  @override
+  Future<void> dispose() => _updates.close();
 }
 
 final class _MemoryProjectStore implements ProjectStore {
@@ -775,6 +1116,56 @@ final class _FakeEngine implements EnginePort {
   EngineTask<Uri> render(RenderRequest request) => throw UnimplementedError();
 }
 
+final class _ControlledProbeEngine implements EnginePort {
+  final _probes = <Uri, Completer<MediaMetadata>>{};
+  final _started = <Uri, Completer<void>>{};
+
+  Future<void> waitUntilProbed(Uri source) =>
+      (_started[source] ??= Completer<void>()).future;
+
+  void complete(Uri source, MediaMetadata metadata) =>
+      (_probes[source] ??= Completer<MediaMetadata>()).complete(metadata);
+
+  @override
+  EngineTask<MediaMetadata> probe(Uri source) {
+    final started = _started[source] ??= Completer<void>();
+    if (!started.isCompleted) started.complete();
+    return _FutureEngineTask<MediaMetadata>(
+      (_probes[source] ??= Completer<MediaMetadata>()).future,
+    );
+  }
+
+  @override
+  EngineTask<DetectedTimeline> detect(Uri source, AnalysisSettings settings) =>
+      throw UnimplementedError();
+
+  @override
+  EngineTask<AnalysisLevels> levels(Uri source, AnalysisMethod method) =>
+      throw UnimplementedError();
+
+  @override
+  EngineTask<Uri> render(RenderRequest request) => throw UnimplementedError();
+}
+
+final class _FailingProbeEngine implements EnginePort {
+  @override
+  EngineTask<MediaMetadata> probe(Uri source) =>
+      _FutureEngineTask<MediaMetadata>(
+        Future<MediaMetadata>.error(StateError('probe failed')),
+      );
+
+  @override
+  EngineTask<DetectedTimeline> detect(Uri source, AnalysisSettings settings) =>
+      throw UnimplementedError();
+
+  @override
+  EngineTask<AnalysisLevels> levels(Uri source, AnalysisMethod method) =>
+      throw UnimplementedError();
+
+  @override
+  EngineTask<Uri> render(RenderRequest request) => throw UnimplementedError();
+}
+
 final class _FakePlayback implements PlaybackPort {
   final opened = <Uri>[];
   var playCalls = 0;
@@ -819,6 +1210,19 @@ final class _ImmediateEngineTask<T> implements EngineTask<T> {
   Future<T> get result async => value;
 }
 
+final class _FutureEngineTask<T> implements EngineTask<T> {
+  _FutureEngineTask(this.result);
+
+  @override
+  final Future<T> result;
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Stream<EngineProgress> get progress => const Stream<EngineProgress>.empty();
+}
+
 final class _FakeRecents implements RecentProjectsPort {
   _FakeRecents({List<Uri>? values, Set<Uri>? accessible})
     : values = values ?? <Uri>[],
@@ -840,19 +1244,27 @@ final class _FakeRecents implements RecentProjectsPort {
 }
 
 final class _FakeSourceResolver implements EditorSourceResolver {
+  _FakeSourceResolver({this.resolved});
+
+  final Uri? resolved;
   final projects = <Uri>[];
 
   @override
   Future<Uri?> resolve(Uri project, SourceReference source) async {
     projects.add(project);
-    return Uri.file(source.absolutePath);
+    return resolved ?? Uri.file(source.absolutePath);
   }
 }
 
 final class _FakeExporter implements EditorExportPort {
+  _FakeExporter({this.failure});
+
+  final Object? failure;
   final requests = <EditorExportRequest>[];
 
   @override
-  Future<void> request(EditorExportRequest request) async =>
-      requests.add(request);
+  Future<void> request(EditorExportRequest request) async {
+    requests.add(request);
+    if (failure case final failure?) throw failure;
+  }
 }
