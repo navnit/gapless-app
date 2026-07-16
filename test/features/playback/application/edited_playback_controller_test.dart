@@ -194,6 +194,66 @@ void main() {
   });
 
   test(
+    'retains an observed trailing-cut target across later stale feedback',
+    () async {
+      player.delaySeeks = true;
+      final controller = create(
+        _timeline(10, [const _Part(8, 10, SegmentAction.cut)]),
+      );
+      final sources = <int>[];
+      final subscription = controller.sourcePositionUs.listen(sources.add);
+      await _settle();
+
+      player.emitPosition(_seconds(8) + 10000);
+      await _settle();
+      expect(player.seeks, [_seconds(10)]);
+      expect(player.seekInFlight, 1);
+
+      player.emitPosition(_seconds(10));
+      player.emitPosition(_seconds(8) + 20000);
+      await _settle();
+      player.completeNextSeek();
+      await _settle();
+
+      expect(controller.currentSourceUs, _seconds(10));
+      expect(sources.last, _seconds(10));
+      expect(player.seeks, [_seconds(10)]);
+      expect(player.pauseCount, 1);
+      await subscription.cancel();
+    },
+  );
+
+  test(
+    'retains a backward seek target across distant origin-side feedback',
+    () async {
+      final controller = create(_timeline(10, const []));
+      final sources = <int>[];
+      final subscription = controller.sourcePositionUs.listen(sources.add);
+      player.emitPosition(_seconds(8));
+      await _settle();
+      player.delaySeeks = true;
+
+      final seekFuture = controller.seekEdited(_seconds(2));
+      await _settle();
+      expect(player.seeks, [_seconds(2)]);
+      expect(player.seekInFlight, 1);
+
+      player.emitPosition(_seconds(2));
+      player.emitPosition(_seconds(6));
+      await _settle();
+      player.completeNextSeek();
+      await seekFuture;
+      await _settle();
+
+      expect(controller.currentSourceUs, _seconds(2));
+      expect(sources.last, _seconds(2));
+      expect(player.seeks, [_seconds(2)]);
+      expect(player.pauseCount, 0);
+      await subscription.cancel();
+    },
+  );
+
+  test(
     'mode and timeline updates reconcile the latest source position',
     () async {
       final controller = create(_timeline(10, const []));

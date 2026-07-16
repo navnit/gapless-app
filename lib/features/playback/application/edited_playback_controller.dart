@@ -143,6 +143,7 @@ final class EditedPlaybackController {
   void _onPosition(int sourceUs) {
     if (_disposed) return;
     final clamped = _clampSource(sourceUs);
+    if (!_acceptPendingFeedback(clamped)) return;
     _latestObservedSourceUs = clamped;
     final generation = ++_generation;
     unawaited(
@@ -163,14 +164,8 @@ final class EditedPlaybackController {
   Future<void> _reactToPosition(int sourceUs, int generation) async {
     if (!_isCurrent(generation)) return;
     final pending = _pendingSeek;
-    if (pending != null) {
-      if (_withinTolerance(sourceUs, pending.targetUs)) {
-        _pendingSeek = null;
-      } else if (_withinTolerance(sourceUs, pending.originUs)) {
-        return;
-      } else {
-        _pendingSeek = null;
-      }
+    if (pending != null && _withinTolerance(sourceUs, pending.targetUs)) {
+      _pendingSeek = null;
     }
     if (!_isCurrent(generation)) return;
     _publishPosition(sourceUs);
@@ -294,6 +289,23 @@ final class EditedPlaybackController {
   bool _withinTolerance(int firstUs, int secondUs) =>
       (firstUs - secondUs).abs() <= seekToleranceUs;
 
+  bool _acceptPendingFeedback(int sourceUs) {
+    final pending = _pendingSeek;
+    if (pending == null) return true;
+    if (_withinTolerance(sourceUs, pending.targetUs)) {
+      pending.targetObserved = true;
+      return true;
+    }
+    if (!pending.targetObserved) {
+      if (_withinTolerance(sourceUs, pending.originUs)) return false;
+      _pendingSeek = null;
+      return true;
+    }
+    if (pending.isStaleOriginSide(sourceUs, seekToleranceUs)) return false;
+    _pendingSeek = null;
+    return true;
+  }
+
   bool _isCurrent(int generation) => !_disposed && generation == _generation;
 
   void _ensureActive() {
@@ -319,10 +331,22 @@ final class EditedPlaybackController {
 }
 
 final class _PendingSeek {
-  const _PendingSeek({required this.originUs, required this.targetUs});
+  _PendingSeek({required this.originUs, required this.targetUs});
 
   final int originUs;
   final int targetUs;
+  bool targetObserved = false;
+
+  bool isStaleOriginSide(int sourceUs, int toleranceUs) {
+    if ((sourceUs - originUs).abs() <= toleranceUs) return true;
+    if (targetUs > originUs) {
+      return sourceUs < targetUs - toleranceUs;
+    }
+    if (targetUs < originUs) {
+      return sourceUs > targetUs + toleranceUs;
+    }
+    return false;
+  }
 }
 
 void _validateCanonicalTimeline(EffectiveTimeline timeline) {
