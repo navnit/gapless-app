@@ -1,0 +1,26 @@
+{
+  "version": "3",
+  "templateFile": "example.mp4",
+  "timebase": "30/1",
+  "background": "#000000",
+  "resolution": [1280, 720],
+  "samplerate": 48000,
+  "layout": "stereo",
+  "langs": ["eng", "eng"],
+  "v": [
+    [
+      {"src": "example.mp4", "start": 0, "dur": 23, "offset": 0, "stream": 0},
+      {"src": "example.mp4", "start": 23, "dur": 359, "offset": 35, "stream": 0},
+      {"src": "example.mp4", "start": 382, "dur": 110, "offset": 411, "stream": 0},
+      {"src": "example.mp4", "start": 492, "dur": 23, "offset": 1196, "stream": 0}
+    ]
+  ],
+  "a": [
+    [
+      {"src": "example.mp4", "start": 0, "dur": 23, "offset": 0, "stream": 0},
+      {"src": "example.mp4", "start": 23, "dur": 359, "offset": 35, "stream": 0},
+      {"src": "example.mp4", "start": 382, "dur": 110, "offset": 411, "stream": 0},
+      {"src": "example.mp4", "start": 492, "dur": 23, "offset": 1196, "stream": 0}
+    ]
+  ]
+}

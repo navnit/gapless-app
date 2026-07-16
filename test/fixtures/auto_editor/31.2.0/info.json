@@ -1,0 +1,40 @@
+{
+  "example.mp4": {
+    "type": "media",
+    "recommendedTimebase": "30/1",
+    "video": [
+      {
+        "codec": "h264",
+        "fps": "30",
+        "resolution": [1280, 720],
+        "aspect_ratio": [16, 9],
+        "pixel_aspect_ratio": "1",
+        "duration": 42.4,
+        "pix_fmt": "yuv420p",
+        "color_range": 1,
+        "color_space": 1,
+        "color_primaries": 1,
+        "color_transfer": 1,
+        "timebase": "1/30000",
+        "bitrate": 240958,
+        "lang": "eng"
+      }
+    ],
+    "audio": [
+      {
+        "codec": "aac",
+        "layout": "stereo",
+        "samplerate": 48000,
+        "duration": 42.4,
+        "bitrate": 317375,
+        "lang": "eng"
+      }
+    ],
+    "subtitle": [],
+    "image": [],
+    "container": {
+      "duration": 42.4,
+      "bitrate": 570335
+    }
+  }
+}

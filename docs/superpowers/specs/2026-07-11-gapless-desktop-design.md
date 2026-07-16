@@ -219,9 +219,19 @@ diagnostics() -> EngineDiagnostics
 The initial implementation maps them to upstream capabilities:
 
 - Metadata: `auto-editor info <source> --json`
-- Waveform/motion levels: `auto-editor levels <source> --edit <method>`
+- Waveform/motion levels: probe the source timebase, then run
+  `auto-editor levels <source> --edit <method> --timebase <rational>` so sample
+  timing remains correct for non-30 sources.
 - Detection: `auto-editor <source> ...settings --export v3 -o <temporary.v3>`
 - Rendering: `auto-editor <effective.v3> -o <destination.partial.mp4> ...encoding`
+
+V3 omits cut clips and does not carry the original source duration. Decoding a
+detected v3 therefore also consumes the verified probe duration to reconstruct
+leading, interior, and trailing cut ranges. Auto-Editor 31.2.0 stores speed
+clip offsets and durations as integer output-time ticks using ceiling division;
+keep/cut boundaries retain one-source-tick fidelity, while fast-forward
+boundaries use one output-tick tolerance (at most `ceil(rate)` source ticks)
+without changing the requested rate.
 
 Arguments are passed as discrete process arguments. Source and destination paths are never interpolated into a shell command.
 
@@ -328,6 +338,9 @@ Errors are typed and mapped to actionable user messages.
 - No telemetry, accounts, advertising, or analytics are included.
 - Processes are launched directly with structured arguments; no shell is invoked.
 - The application validates its bundled engine using a release manifest and checksum.
+- The engine fetch tool starts at the exact configured GitHub HTTPS URL and
+  permits only same-host redirects plus the observed GitHub release asset CDN;
+  cross-host credential headers are stripped and all other redirects fail.
 - Engine logs are bounded and redact unrelated environment values.
 - Temporary files use private platform temporary directories and unpredictable names.
 - Export uses a temporary destination and never truncates an existing target before successful completion is possible.

@@ -1,0 +1,30 @@
+{
+  "engine": "auto-editor",
+  "version": "31.2.0",
+  "targets": {
+    "macos-arm64": {
+      "asset": "auto-editor-macos-arm64",
+      "url": "https://github.com/WyattBlue/auto-editor/releases/download/31.2.0/auto-editor-macos-arm64",
+      "installedFile": "auto-editor",
+      "sha256": "12cad2d0887bf44e6406e13b2cb7f32bd20d7aafb46b495c4b38eea2af590b27"
+    },
+    "macos-x64": {
+      "asset": "auto-editor-macos-x86_64",
+      "url": "https://github.com/WyattBlue/auto-editor/releases/download/31.2.0/auto-editor-macos-x86_64",
+      "installedFile": "auto-editor",
+      "sha256": "124db9cbe80b980d527f3d16fb50fed4133064887227aa4d1f0ad5adb3a8e65e"
+    },
+    "windows-x64": {
+      "asset": "auto-editor-windows-x86_64.exe",
+      "url": "https://github.com/WyattBlue/auto-editor/releases/download/31.2.0/auto-editor-windows-x86_64.exe",
+      "installedFile": "auto-editor.exe",
+      "sha256": "ab7457f67dc41396841777cc4af625bb6372973af99ba2e43dac416cda07aadc"
+    },
+    "linux-x64": {
+      "asset": "auto-editor-linux-x86_64",
+      "url": "https://github.com/WyattBlue/auto-editor/releases/download/31.2.0/auto-editor-linux-x86_64",
+      "installedFile": "auto-editor",
+      "sha256": "4065f5c83210dcad2f53bda8160b7e147b9732ae6e1e9bceb62b0ea256181d6e"
+    }
+  }
+}
