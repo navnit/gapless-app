@@ -164,6 +164,7 @@ final class AppDependencies {
       ),
       onTimelineChanged: playbackOwner.updateTimeline,
       onPreviewModeChanged: playbackOwner.updateMode,
+      onSourceWillOpen: playbackOwner.prepareSource,
       disposeRuntime: () async {
         await analysis.dispose();
         await playbackOwner.dispose();
@@ -262,35 +263,67 @@ final class _EditedPlaybackOwner {
   final PlaybackPort playback;
   EditedPlaybackController? _edited;
   PreviewMode _mode = PreviewMode.edited;
+  Future<void> _tail = Future<void>.value();
+  Future<void>? _disposeFuture;
   var _disposed = false;
 
-  Future<void> updateTimeline(EffectiveTimeline timeline) async {
-    if (_disposed) return;
-    final current = _edited;
-    if (current == null) {
-      final created = EditedPlaybackController(
-        player: playback,
-        timeline: timeline,
-        seekToleranceUs: 50000,
-      );
-      _edited = created;
-      await created.setMode(_playbackMode(_mode));
-      return;
-    }
-    await current.updateTimeline(timeline);
+  Future<void> prepareSource(PreviewMode mode) {
+    if (_disposed) return Future<void>.value();
+    return _enqueue(() async {
+      if (_disposed) return;
+      _mode = mode;
+      final previous = _edited;
+      _edited = null;
+      await previous?.dispose();
+    });
   }
 
-  Future<void> updateMode(PreviewMode mode) async {
-    if (_disposed) return;
-    _mode = mode;
-    await _edited?.setMode(_playbackMode(mode));
+  Future<void> updateTimeline(EffectiveTimeline timeline) {
+    if (_disposed) return Future<void>.value();
+    return _enqueue(() async {
+      if (_disposed) return;
+      final current = _edited;
+      if (current == null) {
+        final created = EditedPlaybackController(
+          player: playback,
+          timeline: timeline,
+          seekToleranceUs: 50000,
+        );
+        _edited = created;
+        await created.setMode(_playbackMode(_mode));
+        return;
+      }
+      await current.updateTimeline(timeline);
+    });
   }
 
-  Future<void> dispose() async {
-    if (_disposed) return;
+  Future<void> updateMode(PreviewMode mode) {
+    if (_disposed) return Future<void>.value();
+    return _enqueue(() async {
+      if (_disposed) return;
+      _mode = mode;
+      await _edited?.setMode(_playbackMode(mode));
+    });
+  }
+
+  Future<void> dispose() {
+    final existing = _disposeFuture;
+    if (existing != null) return existing;
     _disposed = true;
-    await _edited?.dispose();
-    await playback.dispose();
+    final result = _enqueue(() async {
+      final previous = _edited;
+      _edited = null;
+      await previous?.dispose();
+      await playback.dispose();
+    });
+    _disposeFuture = result;
+    return result;
+  }
+
+  Future<void> _enqueue(Future<void> Function() operation) {
+    final result = _tail.then((_) => operation());
+    _tail = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return result;
   }
 }
 

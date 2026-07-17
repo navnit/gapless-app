@@ -109,6 +109,67 @@ void main() {
       expect(playback.events, contains('playing-cancel'));
     },
   );
+
+  test(
+    'production playback drops the old timeline before opening a new source',
+    () async {
+      final root = Directory.systemTemp.absolute;
+      final playback = _FakePlayback();
+      final dependencies = await AppDependencies.production(
+        loadDirectories: () async => AppDirectories(
+          applicationSupport: Directory('${root.path}/gapless-support'),
+          cache: Directory('${root.path}/gapless-cache'),
+          temporary: Directory('${root.path}/gapless-temp'),
+          flutterAssets: Directory('${root.path}/gapless-assets'),
+        ),
+        processRunner: _NoStartProcessRunner(),
+        playbackFactory: () => AppPlayback(playback: playback),
+        recents: _MemoryRecents(),
+      );
+      final editor = dependencies.createEditorViewModel();
+      addTearDown(editor.dispose);
+      await Future<void>.delayed(Duration.zero);
+      final runtime = editor.runtime!;
+      final cutAtStart = EffectiveTimeline.compose(
+        durationUs: 200,
+        detected: <TimelineSegment>[
+          TimelineSegment(
+            range: SourceTimeRange(0, 100),
+            action: SegmentAction.cut,
+            origin: SegmentOrigin.detected,
+          ),
+          TimelineSegment(
+            range: SourceTimeRange(100, 200),
+            action: SegmentAction.keep,
+            origin: SegmentOrigin.detected,
+          ),
+        ],
+        overrides: const <TimelineSegment>[],
+      );
+      await runtime.onTimelineChanged!(cutAtStart);
+      expect(playback.seekCalls, <int>[100]);
+      playback.seekCalls.clear();
+
+      await runtime.onSourceWillOpen!(PreviewMode.original);
+      final source = Uri.file('/videos/new-source.mp4');
+      await runtime.playback.open(source);
+      playback.emitPosition(0);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(playback.opened, <Uri>[source]);
+      expect(playback.seekCalls, isEmpty);
+
+      await runtime.onTimelineChanged!(cutAtStart);
+      expect(playback.seekCalls, isEmpty);
+
+      editor.dispose();
+      await playback.disposed.future;
+      expect(
+        playback.events.where((event) => event == 'playback-dispose'),
+        hasLength(1),
+      );
+    },
+  );
 }
 
 final class _NoStartProcessRunner implements ProcessRunner {
@@ -136,6 +197,7 @@ final class _FakePlayback implements PlaybackPort {
   late final StreamController<int> _positions;
   late final StreamController<bool> _playing;
   final events = <String>[];
+  final opened = <Uri>[];
   final seekCalls = <int>[];
   final rateCalls = <double>[];
   final disposed = Completer<void>();
@@ -155,7 +217,7 @@ final class _FakePlayback implements PlaybackPort {
   }
 
   @override
-  Future<void> open(Uri source) async {}
+  Future<void> open(Uri source) async => opened.add(source);
 
   @override
   Future<void> pause() async {}
@@ -168,6 +230,8 @@ final class _FakePlayback implements PlaybackPort {
 
   @override
   Future<void> setRate(double rate) async => rateCalls.add(rate);
+
+  void emitPosition(int sourceUs) => _positions.add(sourceUs);
 }
 
 final class _MemoryRecents implements RecentProjectsPort {

@@ -290,6 +290,35 @@ void main() {
     expect(viewModel.state.saveStatus, EditorSaveStatus.saved);
   });
 
+  test('save as migrates an active analysis to the new project URI', () async {
+    final analysis = _FakeAnalysis();
+    final store = _MemoryProjectStore();
+    final target = Uri.file('/projects/analyzing-copy.gapless');
+    final viewModel = EditorViewModel(
+      initialState: _readyState(),
+      runtime: _runtime(
+        analysis: analysis,
+        store: store,
+        picker: _FakePicker(save: target),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.setThresholdDb(-18);
+    final activeRequest = analysis.requests.single;
+    await viewModel.saveAs();
+    analysis.emitFor(
+      activeRequest,
+      AnalysisReady(_readyState().timeline!, _readyState().levels!),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(viewModel.state.projectUri, target);
+    expect(viewModel.state.phase, EditorPhase.ready);
+    expect(store.savedUris.last, target);
+    expect(store.savedDocuments.last.detectedSegments, isNotEmpty);
+  });
+
   test(
     'export emits one frozen MP4 workflow request and is not undoable',
     () async {
@@ -513,6 +542,53 @@ void main() {
   );
 
   test(
+    'open project prepares its persisted preview mode before playback',
+    () async {
+      final source = Uri.file('/videos/original-preview.mp4');
+      final projectUri = Uri.file('/projects/original-preview.gapless');
+      final base = _projectWithSource(source, 'a');
+      final project = ProjectDocument(
+        schemaVersion: base.schemaVersion,
+        appVersion: base.appVersion,
+        source: base.source,
+        settings: base.settings,
+        detectedSegments: base.detectedSegments,
+        manualOverrides: base.manualOverrides,
+        ui: ProjectUiState(
+          previewMode: PreviewMode.original,
+          timelineZoom: base.ui.timelineZoom,
+          sidebarWidth: base.ui.sidebarWidth,
+          waveformHeight: base.ui.waveformHeight,
+        ),
+      );
+      final store = _MemoryProjectStore()..loaded[projectUri] = project;
+      final playback = _FakePlayback();
+      final preparedModes = <PreviewMode>[];
+      final viewModel = EditorViewModel(
+        initialState: const EditorState.empty(),
+        runtime: _runtime(
+          analysis: _FakeAnalysis(),
+          store: store,
+          playback: playback,
+          onSourceWillOpen: (mode) async {
+            preparedModes.add(mode);
+            playback.events.add('prepare-${mode.name}');
+          },
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.openProject(projectUri);
+
+      expect(preparedModes, <PreviewMode>[PreviewMode.original]);
+      expect(playback.events, <String>[
+        'prepare-original',
+        'open-${source.toString()}',
+      ]);
+    },
+  );
+
+  test(
     'relocated project persists and consistently uses the resolved source',
     () async {
       final analysis = _FakeAnalysis();
@@ -639,6 +715,87 @@ void main() {
       expect(viewModel.state.phase, EditorPhase.ready);
     },
   );
+
+  test(
+    'cancelling Open preserves current analysis and autosave ownership',
+    () async {
+      final initial = _readyState();
+      final analysis = _FakeAnalysis();
+      final store = _MemoryProjectStore();
+      final controllers = <AutosaveController>[];
+      final viewModel = EditorViewModel(
+        initialState: initial,
+        runtime: _runtime(
+          analysis: analysis,
+          store: store,
+          picker: _FakePicker(),
+          autosaveFactory: (project) {
+            final controller = AutosaveController(
+              project: project,
+              store: store,
+              delay: Duration.zero,
+            );
+            controllers.add(controller);
+            return controller;
+          },
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.setThresholdDb(-18);
+      final activeRequest = analysis.requests.single;
+      final activeAutosave = controllers.single;
+
+      await viewModel.openVideo();
+      await Future<void>.delayed(Duration.zero);
+      analysis.emitFor(
+        activeRequest,
+        AnalysisReady(_readyState().timeline!, _readyState().levels!),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await viewModel.save();
+
+      expect(viewModel.state.projectUri, initial.projectUri);
+      expect(viewModel.state.phase, EditorPhase.ready);
+      expect(activeAutosave.status, isNot(isA<AutosaveDisposed>()));
+      expect(controllers, hasLength(1));
+      expect(store.savedUris.last, initial.projectUri);
+    },
+  );
+
+  test('a stale picker result cannot replace a newer selection', () async {
+    final firstSource = Uri.file('/videos/first-picked.mp4');
+    final secondSource = Uri.file('/videos/second-picked.mp4');
+    final picker = _ControlledPicker();
+    final fingerprinter = _FakeFingerprinter();
+    final engine = _FakeEngine();
+    final playback = _FakePlayback();
+    final analysis = _FakeAnalysis();
+    final viewModel = EditorViewModel(
+      initialState: const EditorState.empty(),
+      runtime: _runtime(
+        analysis: analysis,
+        store: _MemoryProjectStore(),
+        picker: picker,
+        fingerprinter: fingerprinter,
+        engine: engine,
+        playback: playback,
+      ),
+    );
+    addTearDown(viewModel.dispose);
+
+    final firstOpen = viewModel.openVideo();
+    final secondOpen = viewModel.openVideo();
+    picker.videoSelections[1].complete(secondSource);
+    await secondOpen;
+    picker.videoSelections[0].complete(firstSource);
+    await firstOpen;
+
+    expect(fingerprinter.sources, <Uri>[secondSource]);
+    expect(engine.probed, <Uri>[secondSource]);
+    expect(playback.opened, <Uri>[secondSource]);
+    expect(analysis.requests.single.source.absolutePath, secondSource.path);
+  });
 
   test('project switches flush and dispose the previous autosave', () async {
     final initial = _readyState();
@@ -981,7 +1138,7 @@ final _segments = <TimelineSegment>[
 EditorRuntime _runtime({
   required _FakeAnalysis analysis,
   required _MemoryProjectStore store,
-  _FakePicker? picker,
+  EditorFilePicker? picker,
   _FakeFingerprinter? fingerprinter,
   EnginePort? engine,
   _FakePlayback? playback,
@@ -989,6 +1146,7 @@ EditorRuntime _runtime({
   RecentProjectsPort? recents,
   _FakeSourceResolver? sourceResolver,
   TimelineChanged? onTimelineChanged,
+  SourceWillOpen? onSourceWillOpen,
   AutosaveFactory? autosaveFactory,
 }) => EditorRuntime(
   picker: picker ?? _FakePicker(),
@@ -1011,6 +1169,7 @@ EditorRuntime _runtime({
         delay: Duration.zero,
       ),
   onTimelineChanged: onTimelineChanged,
+  onSourceWillOpen: onSourceWillOpen,
 );
 
 final class _FakeAnalysis implements EditorAnalysisPort {
@@ -1078,6 +1237,23 @@ final class _FakePicker implements EditorFilePicker {
 
   @override
   Future<Uri?> saveProject({required String suggestedName}) async => save;
+}
+
+final class _ControlledPicker implements EditorFilePicker {
+  final videoSelections = <Completer<Uri?>>[];
+
+  @override
+  Future<Uri?> pickProject() async => null;
+
+  @override
+  Future<Uri?> pickVideo() {
+    final selection = Completer<Uri?>();
+    videoSelections.add(selection);
+    return selection.future;
+  }
+
+  @override
+  Future<Uri?> saveProject({required String suggestedName}) async => null;
 }
 
 final class _FakeFingerprinter implements SourceFingerprinter {
@@ -1168,6 +1344,7 @@ final class _FailingProbeEngine implements EnginePort {
 
 final class _FakePlayback implements PlaybackPort {
   final opened = <Uri>[];
+  final events = <String>[];
   var playCalls = 0;
 
   @override
@@ -1180,7 +1357,10 @@ final class _FakePlayback implements PlaybackPort {
   Future<void> dispose() async {}
 
   @override
-  Future<void> open(Uri source) async => opened.add(source);
+  Future<void> open(Uri source) async {
+    opened.add(source);
+    events.add('open-${source.toString()}');
+  }
 
   @override
   Future<void> pause() async {}

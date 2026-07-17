@@ -178,3 +178,61 @@ flutter test --reporter compact
 git diff --check
 Clean (exit 0, no output).
 ```
+
+The review-fix verification above belongs to commit `a6305da`. In particular,
+the 32 focused tests and 236-test full-suite result predate the second-review
+delta below and must not be read as runtime verification of that later patch.
+
+## Second-review fixes
+
+The second review identified three source-transition regressions. The third
+delta addresses each with a focused regression test and a scoped production
+change:
+
+- Opening a video or project now uses a separate picker-attempt token. A
+  cancelled picker leaves the current analysis generation and autosave owner
+  intact, while a late result from an older concurrent picker cannot replace a
+  newer selection.
+- Save As now migrates the active analysis request identity to the selected
+  `.gapless` URI and saves the latest in-memory project. Analysis that finishes
+  after the URI change can therefore reach Ready and persist its detected
+  timeline to the new target.
+- Every source open now serially prepares playback before the raw player opens.
+  Production composition records the incoming project's persisted preview
+  mode, clears and disposes the previous `EditedPlaybackController`, then opens
+  the new source. Position zero from the new source can no longer reconcile
+  against the old timeline, and the underlying playback adapter remains owned
+  and disposed exactly once.
+
+### Third-delta verification boundary
+
+Independent static review returned `APPROVED_STATIC`. The available local
+whitespace gate passed:
+
+```text
+git diff --check
+Clean (exit 0, no output).
+```
+
+Deferred runtime verification completed on 2026-07-17 after escalated Flutter
+execution became available:
+
+```text
+dart format --output=none --set-exit-if-changed lib test integration_test tool
+Formatted 76 files (0 changed).
+
+flutter analyze
+No issues found.
+
+flutter test test/app/gapless_app_test.dart \
+  test/features/editor/presentation/editor_screen_test.dart
+37 tests passed (including both approved editor goldens before the later
+accessibility baseline update).
+
+flutter test
+312 tests passed; 1 existing platform-conditional test skipped.
+```
+
+The full-suite result also includes the subsequent export and accessibility
+work, but it exercises this third delta and supersedes the earlier
+`APPROVED_STATIC`-only boundary.

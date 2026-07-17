@@ -71,6 +71,7 @@ typedef AutosaveFactory = AutosaveController Function(Uri project);
 typedef DraftProjectUriFactory = Uri Function(Uri source);
 typedef TimelineChanged = Future<void> Function(EffectiveTimeline timeline);
 typedef PreviewModeChanged = Future<void> Function(PreviewMode mode);
+typedef SourceWillOpen = Future<void> Function(PreviewMode mode);
 typedef RuntimeDisposer = Future<void> Function();
 
 final class EditorRuntime {
@@ -88,6 +89,7 @@ final class EditorRuntime {
     required this.autosaveFactory,
     this.onTimelineChanged,
     this.onPreviewModeChanged,
+    this.onSourceWillOpen,
     this.disposeRuntime,
   });
 
@@ -104,6 +106,7 @@ final class EditorRuntime {
   final AutosaveFactory autosaveFactory;
   final TimelineChanged? onTimelineChanged;
   final PreviewModeChanged? onPreviewModeChanged;
+  final SourceWillOpen? onSourceWillOpen;
   final RuntimeDisposer? disposeRuntime;
 }
 
@@ -242,6 +245,7 @@ final class EditorViewModel extends ChangeNotifier {
   _AnalysisRequestIdentity? _analysisRequest;
   var _analysisRequestSequence = 0;
   var _operationGeneration = 0;
+  var _pickerAttempt = 0;
   final List<_EditorCommand> _undo = <_EditorCommand>[];
   final List<_EditorCommand> _redo = <_EditorCommand>[];
   var _disposed = false;
@@ -252,17 +256,28 @@ final class EditorViewModel extends ChangeNotifier {
   Future<void> openVideo() async {
     final runtime = this.runtime;
     if (runtime == null) return;
-    final generation = _beginOpenOperation();
+    final pickerAttempt = ++_pickerAttempt;
+    int? generation;
     try {
-      await _openVideo(runtime, generation);
+      final source = await runtime.picker.pickVideo();
+      if (source == null || !_isPickerAttemptCurrent(pickerAttempt)) return;
+      generation = _beginOpenOperation();
+      await _openVideo(runtime, generation, source);
     } on Object catch (error) {
-      _reportOperationFailure(generation, error);
+      if (generation case final activeGeneration?) {
+        _reportOperationFailure(activeGeneration, error);
+      } else {
+        _reportPickerFailure(pickerAttempt, error);
+      }
     }
   }
 
-  Future<void> _openVideo(EditorRuntime runtime, int generation) async {
-    final source = await runtime.picker.pickVideo();
-    if (source == null || !_isOperationCurrent(generation)) return;
+  Future<void> _openVideo(
+    EditorRuntime runtime,
+    int generation,
+    Uri source,
+  ) async {
+    if (!_isOperationCurrent(generation)) return;
     _setState(
       const EditorState(
         phase: EditorPhase.importing,
@@ -314,7 +329,9 @@ final class EditorViewModel extends ChangeNotifier {
 
     final metadata = await _probeSource(source, generation);
     if (metadata == null) return;
-    if (!await _openPlayback(source, generation)) return;
+    if (!await _openPlayback(source, generation, project.ui.previewMode)) {
+      return;
+    }
     await _rememberRecent(projectUri, generation: generation);
     if (!_isOperationCurrent(generation)) return;
     _undo.clear();
@@ -345,21 +362,28 @@ final class EditorViewModel extends ChangeNotifier {
   Future<void> openProject([Uri? project]) async {
     final runtime = this.runtime;
     if (runtime == null) return;
-    final generation = _beginOpenOperation();
+    final pickerAttempt = ++_pickerAttempt;
+    int? generation;
     try {
-      await _openProject(runtime, generation, project);
+      final selected = project ?? await runtime.picker.pickProject();
+      if (selected == null || !_isPickerAttemptCurrent(pickerAttempt)) return;
+      generation = _beginOpenOperation();
+      await _openProject(runtime, generation, selected);
     } on Object catch (error) {
-      _reportOperationFailure(generation, error);
+      if (generation case final activeGeneration?) {
+        _reportOperationFailure(activeGeneration, error);
+      } else {
+        _reportPickerFailure(pickerAttempt, error);
+      }
     }
   }
 
   Future<void> _openProject(
     EditorRuntime runtime,
     int generation,
-    Uri? project,
+    Uri selected,
   ) async {
-    final selected = project ?? await runtime.picker.pickProject();
-    if (selected == null || !_isOperationCurrent(generation)) return;
+    if (!_isOperationCurrent(generation)) return;
     _setState(
       const EditorState(
         phase: EditorPhase.importing,
@@ -412,7 +436,13 @@ final class EditorViewModel extends ChangeNotifier {
     if (!_isOperationCurrent(generation)) return;
     final metadata = await _probeSource(source, generation);
     if (metadata == null) return;
-    if (!await _openPlayback(source, generation)) return;
+    if (!await _openPlayback(
+      source,
+      generation,
+      resolvedDocument.ui.previewMode,
+    )) {
+      return;
+    }
     _undo.clear();
     _redo.clear();
     await _rememberRecent(selected, generation: generation);
@@ -474,6 +504,7 @@ final class EditorViewModel extends ChangeNotifier {
     final project = _state.project;
     if (runtime == null || project == null) return;
     final generation = _operationGeneration;
+    final previousProjectUri = _state.projectUri;
     final sourceName = project.source.relativePath;
     final dot = sourceName.lastIndexOf('.');
     final stem = dot > 0 ? sourceName.substring(0, dot) : sourceName;
@@ -489,10 +520,20 @@ final class EditorViewModel extends ChangeNotifier {
     _autosave = null;
     await _queueAutosaveDisposal(previous);
     if (!_isOperationCurrent(generation)) return;
+    final currentProject = _state.project;
+    if (currentProject == null) return;
+    final analysisRequest = _analysisRequest;
+    if (analysisRequest != null &&
+        analysisRequest.generation == generation &&
+        analysisRequest.projectUri == previousProjectUri &&
+        analysisRequest.source == currentProject.source &&
+        analysisRequest.settings == currentProject.settings) {
+      _analysisRequest = analysisRequest.withProjectUri(target);
+    }
     _setState(
       _state.copyWith(projectUri: target, saveStatus: EditorSaveStatus.idle),
     );
-    await _save(project, generation: generation);
+    await _save(currentProject, generation: generation);
     if (_state.saveStatus == EditorSaveStatus.saved) {
       await _rememberRecent(target, generation: generation);
     }
@@ -946,6 +987,14 @@ final class EditorViewModel extends ChangeNotifier {
   bool _isOperationCurrent(int generation) =>
       !_disposed && generation == _operationGeneration;
 
+  bool _isPickerAttemptCurrent(int attempt) =>
+      !_disposed && attempt == _pickerAttempt;
+
+  void _reportPickerFailure(int attempt, Object error) {
+    if (!_isPickerAttemptCurrent(attempt)) return;
+    _setState(_state.copyWith(message: error.toString()));
+  }
+
   void _reportOperationFailure(int generation, Object error) {
     if (!_isOperationCurrent(generation)) return;
     _setState(
@@ -987,8 +1036,10 @@ final class EditorViewModel extends ChangeNotifier {
     }
   }
 
-  Future<bool> _openPlayback(Uri source, int generation) {
+  Future<bool> _openPlayback(Uri source, int generation, PreviewMode mode) {
     final result = _playbackTail.then((_) async {
+      if (!_isOperationCurrent(generation)) return false;
+      await runtime!.onSourceWillOpen?.call(mode);
       if (!_isOperationCurrent(generation)) return false;
       await runtime!.playback.open(source);
       return _isOperationCurrent(generation);
@@ -1114,6 +1165,7 @@ final class EditorViewModel extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _operationGeneration += 1;
+    _pickerAttempt += 1;
     _analysisRequest = null;
     runtime?.analysis.invalidate();
     final probe = _probeTask;
@@ -1176,6 +1228,15 @@ final class _AnalysisRequestIdentity {
   final Uri projectUri;
   final SourceReference source;
   final AnalysisSettings settings;
+
+  _AnalysisRequestIdentity withProjectUri(Uri projectUri) =>
+      _AnalysisRequestIdentity(
+        requestId: requestId,
+        generation: generation,
+        projectUri: projectUri,
+        source: source,
+        settings: settings,
+      );
 }
 
 String _progressMessage(EngineProgress progress) => switch (progress.stage) {
