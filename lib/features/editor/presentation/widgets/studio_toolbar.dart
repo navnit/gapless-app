@@ -29,32 +29,39 @@ final class StudioToolbar extends StatelessWidget {
           children: <Widget>[
             FocusTraversalOrder(
               order: const NumericFocusOrder(1),
-              child: OutlinedButton(
-                key: const ValueKey<String>('toolbar.open'),
-                onPressed: onOpenVideo,
-                child: const Text('Open…'),
-              ),
-            ),
-            const SizedBox(width: 4),
-            PopupMenuButton<Object>(
-              tooltip: 'Open project or recent project',
-              icon: const Icon(Icons.keyboard_arrow_down, size: 18),
-              onSelected: (value) => onOpenProject(value is Uri ? value : null),
-              itemBuilder: (context) => <PopupMenuEntry<Object>>[
-                const PopupMenuItem<Object>(
-                  value: 'open-project',
-                  child: Text('Open Project…'),
-                ),
-                if (state.recentProjects.isNotEmpty) const PopupMenuDivider(),
-                for (final project in state.recentProjects)
-                  PopupMenuItem<Object>(
-                    value: project,
-                    child: Text(
-                      project.pathSegments.last,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  OutlinedButton(
+                    key: const ValueKey<String>('toolbar.open'),
+                    onPressed: onOpenVideo,
+                    child: const Text('Open…'),
                   ),
-              ],
+                  const SizedBox(width: 4),
+                  PopupMenuButton<Object>(
+                    tooltip: 'Open project or recent project',
+                    icon: const Icon(Icons.keyboard_arrow_down, size: 18),
+                    onSelected: (value) =>
+                        onOpenProject(value is Uri ? value : null),
+                    itemBuilder: (context) => <PopupMenuEntry<Object>>[
+                      const PopupMenuItem<Object>(
+                        value: 'open-project',
+                        child: Text('Open Project…'),
+                      ),
+                      if (state.recentProjects.isNotEmpty)
+                        const PopupMenuDivider(),
+                      for (final project in state.recentProjects)
+                        PopupMenuItem<Object>(
+                          value: project,
+                          child: Text(
+                            project.pathSegments.last,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
             const SizedBox(width: 8),
             if (state.project case final project?)
@@ -108,7 +115,7 @@ final class StudioToolbar extends StatelessWidget {
                 onSelectionChanged: (selection) =>
                     onPreviewModeChanged(selection.single),
                 style: const ButtonStyle(
-                  minimumSize: WidgetStatePropertyAll(Size(74, 30)),
+                  minimumSize: WidgetStatePropertyAll(Size(74, 40)),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
               ),

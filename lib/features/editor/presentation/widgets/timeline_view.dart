@@ -341,15 +341,21 @@ final class _HeaderButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Tooltip(
     message: tooltip,
+    excludeFromSemantics: true,
     child: Semantics(
       button: true,
       label: tooltip,
+      onTap: onTap,
+      excludeSemantics: true,
       child: InkWell(
         borderRadius: BorderRadius.circular(5),
         onTap: onTap,
+        splashFactory: MediaQuery.disableAnimationsOf(context)
+            ? NoSplash.splashFactory
+            : null,
         child: SizedBox(
-          width: width,
-          height: 20,
+          width: math.max(width, 40),
+          height: 40,
           child: DefaultTextStyle(
             style: TextStyle(color: palette.mutedText, fontSize: 13, height: 1),
             child: Center(child: child),

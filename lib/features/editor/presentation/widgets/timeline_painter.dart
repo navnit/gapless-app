@@ -35,7 +35,7 @@ final class TimelinePalette {
           playhead: Color(0xFFE25C4A),
           text: Color(0xFFECEDEF),
           mutedText: Color(0xFF9BA1AA),
-          faintText: Color(0xFF666C76),
+          faintText: Color(0xFF9BA1AA),
         )
       : const TimelinePalette(
           accent: Color(0xFFE3A63B),
@@ -49,7 +49,7 @@ final class TimelinePalette {
           playhead: Color(0xFFD4482F),
           text: Color(0xFF1C1E22),
           mutedText: Color(0xFF5D636C),
-          faintText: Color(0xFF9BA1AA),
+          faintText: Color(0xFF5D636C),
         );
 
   final Color accent;

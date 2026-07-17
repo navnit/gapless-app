@@ -127,34 +127,48 @@ final class VideoPreview extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         SizedBox(
-          height: 38,
+          height: 40,
           child: Row(
             children: <Widget>[
-              IconButton.filled(
-                key: const ValueKey<String>('preview.playPause'),
-                onPressed: onTogglePlayback,
-                icon: Icon(
-                  state.isPlaying
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                  size: 19,
+              Semantics(
+                button: true,
+                label: state.isPlaying ? 'Pause' : 'Play',
+                onTap: onTogglePlayback,
+                excludeSemantics: true,
+                child: IconButton.filled(
+                  key: const ValueKey<String>('preview.playPause'),
+                  onPressed: onTogglePlayback,
+                  icon: Icon(
+                    state.isPlaying
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    size: 19,
+                  ),
+                  tooltip: state.isPlaying ? 'Pause' : 'Play',
+                  constraints: const BoxConstraints.tightFor(
+                    width: 40,
+                    height: 40,
+                  ),
+                  padding: EdgeInsets.zero,
+                  style: const ButtonStyle(
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
                 ),
-                tooltip: state.isPlaying ? 'Pause' : 'Play',
-                constraints: const BoxConstraints.tightFor(
-                  width: 36,
-                  height: 36,
-                ),
-                padding: EdgeInsets.zero,
               ),
               const SizedBox(width: 12),
               Text(
                 '${_formatTime(currentUs)}  /  ${_formatTime(totalUs)}',
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5),
               ),
-              const Spacer(),
-              Text(
-                'Space to play · playback skips cuts in Edited view',
-                style: TextStyle(color: muted, fontSize: 11),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Space to play · playback skips cuts in Edited view',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                  style: TextStyle(color: muted, fontSize: 11),
+                ),
               ),
             ],
           ),
