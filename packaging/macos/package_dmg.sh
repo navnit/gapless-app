@@ -34,4 +34,5 @@ codesign --force --timestamp --sign "$identity" "$output"
 if [ -n "${GAPLESS_NOTARY_PROFILE:-}" ]; then
   xcrun notarytool submit "$output" --keychain-profile "$GAPLESS_NOTARY_PROFILE" --wait
   xcrun stapler staple "$output"
+  xcrun stapler validate "$output"
 fi

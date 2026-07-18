@@ -57,9 +57,7 @@ void main() {
     expect(
       validation,
       lessThan(
-        workflow.indexOf(
-          'Import Apple signing and notarization credentials',
-        ),
+        workflow.indexOf('Import Apple signing and notarization credentials'),
       ),
     );
     expect(
@@ -100,5 +98,20 @@ void main() {
       workflow.substring(0, workflow.indexOf('  publish:')),
       contains('contents: read'),
     );
+  });
+
+  test('documents the public macOS-only 0.1.0 download', () {
+    final readme = File('README.md').readAsStringSync();
+    final building = File('docs/building.md').readAsStringSync();
+
+    expect(readme, contains('Gapless 0.1.0'));
+    expect(
+      readme,
+      contains('https://github.com/navnit/gapless/releases/latest'),
+    );
+    expect(readme, contains('Windows and Linux remain planned targets'));
+    expect(building, contains('Ubuntu 24.04/glibc 2.39 baseline'));
+    expect(building, contains('v0.1.0'));
+    expect(building, contains('macos-release'));
   });
 }

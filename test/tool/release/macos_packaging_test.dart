@@ -17,4 +17,14 @@ void main() {
     expect(frameworkSigning, lessThan(appSigning));
     expect(script, isNot(contains('codesign --deep')));
   });
+
+  test('validates the stapled notarization ticket', () async {
+    final script = await File('packaging/macos/package_dmg.sh').readAsString();
+
+    final staple = script.indexOf(r'xcrun stapler staple "$output"');
+    final validate = script.indexOf(r'xcrun stapler validate "$output"');
+
+    expect(staple, greaterThanOrEqualTo(0));
+    expect(validate, greaterThan(staple));
+  });
 }
