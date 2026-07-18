@@ -60,8 +60,13 @@ Future<void> main(List<String> arguments) async {
     'spdxVersion': 'SPDX-2.3',
     'dataLicense': 'CC0-1.0',
     'SPDXID': 'SPDXRef-DOCUMENT',
-    'name': 'Gapless-${Platform.environment['GITHUB_REF_NAME'] ?? 'local'}',
-    'documentNamespace': 'https://gapless.invalid/spdx/${revision.sha}',
+    'name':
+        'Gapless-${Platform.environment['GITHUB_REF_NAME'] ?? 'local'}-'
+        '${options.target ?? 'source'}',
+    'documentNamespace': sbomDocumentNamespace(
+      revisionSha: revision.sha,
+      target: options.target ?? 'source',
+    ),
     'creationInfo': <String, Object>{
       'created': revision.created.toIso8601String(),
       'creators': <String>['Tool: Gapless-generate-sbom'],
@@ -75,6 +80,19 @@ Future<void> main(List<String> arguments) async {
     '${const JsonEncoder.withIndent('  ').convert(document)}\n',
     flush: true,
   );
+}
+
+String sbomDocumentNamespace({
+  required String revisionSha,
+  required String target,
+}) {
+  if (!RegExp(r'^[0-9a-f]{40}$').hasMatch(revisionSha)) {
+    throw const FormatException('SBOM revision must be a full Git SHA.');
+  }
+  if (!RegExp(r'^[a-z0-9-]+$').hasMatch(target)) {
+    throw const FormatException('SBOM target contains invalid characters.');
+  }
+  return 'https://gapless.invalid/spdx/$revisionSha/$target';
 }
 
 Future<List<Map<String, Object>>> resolvedPackages({
@@ -164,10 +182,11 @@ Future<({String sha, DateTime created})> _revisionIdentity() async {
 }
 
 final class _Options {
-  const _Options({required this.output, this.bundle});
+  const _Options({required this.output, this.bundle, this.target});
 
   final File output;
   final Directory? bundle;
+  final String? target;
 
   factory _Options.parse(List<String> arguments) {
     if (arguments.isEmpty) {
@@ -175,6 +194,7 @@ final class _Options {
     }
     String? output;
     String? bundle;
+    String? target;
     for (var index = 0; index < arguments.length; index += 2) {
       if (index + 1 >= arguments.length) throw const FormatException('args');
       switch (arguments[index]) {
@@ -182,16 +202,21 @@ final class _Options {
           output = arguments[index + 1];
         case '--bundle':
           bundle = arguments[index + 1];
+        case '--target':
+          target = arguments[index + 1];
         default:
           throw FormatException('Unknown argument: ${arguments[index]}');
       }
     }
-    if (output == null || bundle == null) {
-      throw const FormatException('--bundle and --output are required.');
+    if (output == null || bundle == null || target == null) {
+      throw const FormatException(
+        '--bundle, --output, and --target are required.',
+      );
     }
     return _Options(
       output: File(path.absolute(output)),
       bundle: Directory(path.absolute(bundle)),
+      target: target,
     );
   }
 }

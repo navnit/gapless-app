@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   build:
+    environment:
+      name: macos-release
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +29,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Require reviewed main revision
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            [ "$GITHUB_REF" = refs/heads/main ] || {
+              echo '::error::Manual release candidates must run from main.'
+              exit 1
+            }
+          else
+            git fetch --no-tags origin main:refs/remotes/origin/main
+            main_sha=$(git rev-parse origin/main^{commit})
+            release_sha=$(git rev-parse "$GITHUB_SHA^{commit}")
+            [ "$release_sha" = "$main_sha" ] || {
+              echo '::error::Release tag must point to the fetched origin/main commit.'
+              exit 1
+            }
+          fi
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
         with:
           flutter-version: 3.44.4
@@ -34,9 +53,11 @@ jobs:
       - name: Resolve and validate release version
         id: version
         shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            release_version='${{ inputs.version }}'
+            release_version="$DISPATCH_VERSION"
           else
             release_version=${GITHUB_REF_NAME#v}
           fi
@@ -67,7 +88,7 @@ jobs:
       - run: dart run tool/release/generate_sbom.dart
       - run: dart run tool/testing/generate_fixture_video.dart build/smoke/source.avi
       - run: flutter build macos --release
-      - run: dart run tool/release/generate_sbom.dart --bundle build/macos/Build/Products/Release/Gapless.app --output build/macos/Build/Products/Release/Gapless.app/Contents/Resources/compliance/sbom.spdx.json
+      - run: dart run tool/release/generate_sbom.dart --bundle build/macos/Build/Products/Release/Gapless.app --output build/macos/Build/Products/Release/Gapless.app/Contents/Resources/compliance/sbom.spdx.json --target "${{ matrix.target }}"
       - name: Import Apple signing and notarization credentials
         env:
           P12_BASE64: ${{ secrets.MACOS_P12_BASE64 }}
@@ -91,6 +112,10 @@ jobs:
           GAPLESS_MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
           GAPLESS_NOTARY_PROFILE: GaplessNotary
         run: packaging/macos/package_dmg.sh build/macos/Build/Products/Release/Gapless.app "build/Gapless-${{ steps.version.outputs.value }}-${{ matrix.target }}.dmg"
+      - name: Generate and verify final signed-app SBOM
+        run: |
+          dart run tool/release/generate_sbom.dart --bundle build/macos/Build/Products/Release/Gapless.app --output "build/sbom-${{ matrix.target }}.spdx.json" --target "${{ matrix.target }}"
+          dart run tool/release/verify_bundle.dart --bundle build/macos/Build/Products/Release/Gapless.app --target "${{ matrix.target }}" --sbom "build/sbom-${{ matrix.target }}.spdx.json"
       - name: Smoke test installed macOS DMG
         run: |
           dmg="build/Gapless-${{ steps.version.outputs.value }}-${{ matrix.target }}.dmg"
@@ -100,7 +125,7 @@ jobs:
           trap 'hdiutil detach "$mount"' EXIT
           spctl --assess --type execute --verbose=4 "$mount/Gapless.app"
           "$mount/Gapless.app/Contents/MacOS/Gapless" --smoke-test "$GITHUB_WORKSPACE/build/smoke/source.avi" "$RUNNER_TEMP/installed-output.mp4"
-          dart run tool/release/verify_bundle.dart --bundle "$mount/Gapless.app" --target ${{ matrix.target }}
+          dart run tool/release/verify_bundle.dart --bundle "$mount/Gapless.app" --target "${{ matrix.target }}" --sbom "$GITHUB_WORKSPACE/build/sbom-${{ matrix.target }}.spdx.json"
       - run: flutter test integration_test/editor_workflow_test.dart -d macos
       - run: flutter test integration_test/recovery_workflow_test.dart -d macos
       - name: Checksums and source material
@@ -109,7 +134,6 @@ jobs:
           shasum -a 256 "Gapless-${{ steps.version.outputs.value }}-${{ matrix.target }}.dmg" > "SHA256SUMS-${{ matrix.target }}"
           cp ../docs/building.md .
           cp ../third_party/THIRD_PARTY_NOTICES.md .
-          cp macos/Build/Products/Release/Gapless.app/Contents/Resources/compliance/sbom.spdx.json "sbom-${{ matrix.target }}.spdx.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: macos-${{ steps.version.outputs.value }}-${{ matrix.target }}
@@ -129,6 +153,29 @@ jobs:
     environment:
       name: macos-release
     steps:
+      - name: Refuse an existing GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          status=$(curl --silent --show-error \
+            --output "$RUNNER_TEMP/release-preflight.json" \
+            --write-out '%{http_code}' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")
+          case "$status" in
+            404) ;;
+            200)
+              echo '::error::A GitHub Release already exists for this tag.'
+              exit 1
+              ;;
+            *)
+              echo "::error::Release preflight failed with HTTP $status."
+              exit 1
+              ;;
+          esac
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: artifacts
@@ -144,4 +191,5 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Gapless ${{ github.ref_name }}
           generate_release_notes: true
+          overwrite_files: false
           files: artifacts/*

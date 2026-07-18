@@ -36,13 +36,15 @@ is insufficient because incremental framework copies can restore the metadata.
 - Linux AppDir: `usr/lib/gapless/engine/auto-editor`
 
 Each layout includes the engine manifest and a `compliance` directory with the
-third-party notices, source offer, and SPDX SBOM. Run `verify_bundle.dart`
-against the native bundle with its exact manifest target before creating its
-installer.
+third-party notices, source offer, and SPDX SBOM. For a macOS release, the
+public per-target SBOM remains outside the signed app: the workflow generates
+it from the final signed app after packaging, then checks exact regular-file
+coverage and SHA-256 values against both the build app and the mounted DMG app.
 
 ## Signing
 
-The protected macOS release workflow requires these repository secrets:
+Store these seven values as macos-release environment secrets, not as
+repository-level secrets:
 
 - `MACOS_P12_BASE64`
 - `MACOS_P12_PASSWORD`
@@ -58,17 +60,26 @@ them to pull-request workflows.
 
 ## 0.1.0 release workflow
 
-In the repository settings, create the protected `macos-release` environment
-and configure at least one required reviewer before assigning its signing and
-notarization secrets. The workflow has separate manual-candidate and tag entry
-points. A manual candidate runs from `main` with version `0.1.0`; it signs,
+Before any candidate or tag run, configure protected `main` to require pull
+requests, review approval, and required verification checks, and to block force
+pushes and deletion. Also configure a `v*` tag ruleset that restricts tag
+creation to release owners and blocks tag updates and deletions. These
+protections make the reviewed `main` commit and every published release tag
+immutable prerequisites rather than conventions.
+
+In the repository settings, create the protected `macos-release` environment,
+add the seven environment secrets above, and configure at least one required
+reviewer. The workflow has separate manual-candidate and tag entry points. A
+manual candidate runs only from `main` with version `0.1.0`; it signs,
 notarizes, validates, smoke-tests, and uploads its DMGs as Actions artifacts,
 without creating or modifying a GitHub Release.
 
 After the manual candidate has passed, create annotated tag `v0.1.0` from the
 approved `main` commit and push it. The tag run builds the Apple Silicon and
-Intel DMGs and waits for approval in `macos-release`. Only approval of that tag
-run makes the GitHub Release public.
+Intel DMGs only when the tag commit still equals fetched `origin/main`, then
+waits for approval in `macos-release`. Publication refuses a tag that already
+has a GitHub Release and never overwrites existing assets. Only approval of
+that tag run makes the GitHub Release public.
 
 ## Release outputs
 

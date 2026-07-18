@@ -78,6 +78,68 @@ void main() {
     );
   });
 
+  test('keeps hostile manual version input out of the shell program', () {
+    const hostileVersion = "0.1.0'; touch /tmp/pwned; echo '";
+    expect(hostileVersion, contains("'"));
+    expect(workflow, contains(r'DISPATCH_VERSION: ${{ inputs.version }}'));
+    expect(workflow, contains(r'release_version="$DISPATCH_VERSION"'));
+
+    final versionStep = workflow.substring(
+      workflow.indexOf('      - name: Resolve and validate release version'),
+      workflow.indexOf(
+        '      - name: Validate signing and notarization secrets',
+      ),
+    );
+    expect(
+      versionStep,
+      isNot(contains("release_version='\${{ inputs.version }}'")),
+    );
+    expect(
+      versionStep.substring(versionStep.indexOf('        run: |')),
+      isNot(contains(r'${{ inputs.version }}')),
+    );
+  });
+
+  test('signs only main dispatches or tags at the fetched main commit', () {
+    final refValidation = workflow.indexOf(
+      '      - name: Require reviewed main revision',
+    );
+    final secretValidation = workflow.indexOf(
+      '      - name: Validate signing and notarization secrets',
+    );
+
+    expect(refValidation, greaterThanOrEqualTo(0));
+    expect(refValidation, lessThan(secretValidation));
+    expect(workflow, contains(r'[ "$GITHUB_REF" = refs/heads/main ]'));
+    expect(
+      workflow,
+      contains('git fetch --no-tags origin main:refs/remotes/origin/main'),
+    );
+    expect(
+      workflow,
+      contains(r'main_sha=$(git rev-parse origin/main^{commit})'),
+    );
+    expect(
+      workflow,
+      contains(r'release_sha=$(git rev-parse "$GITHUB_SHA^{commit}")'),
+    );
+    expect(workflow, contains(r'[ "$release_sha" = "$main_sha" ]'));
+  });
+
+  test('protects every credential-bearing build with macos-release', () {
+    final buildHeader = workflow.substring(
+      workflow.indexOf('  build:'),
+      workflow.indexOf('    steps:'),
+    );
+
+    expect(buildHeader, contains('environment:'));
+    expect(buildHeader, contains('name: macos-release'));
+    expect(
+      workflow.substring(workflow.indexOf('  publish:')),
+      contains('name: macos-release'),
+    );
+  });
+
   test('requires installed-artifact proof before upload', () {
     for (final required in <String>[
       ...macosReleaseSecrets,
@@ -94,6 +156,57 @@ void main() {
     }
   });
 
+  test('generates and verifies each public SBOM from the final signed app', () {
+    final package = workflow.indexOf('packaging/macos/package_dmg.sh');
+    final finalSbom = workflow.indexOf(
+      '      - name: Generate and verify final signed-app SBOM',
+    );
+    final smoke = workflow.indexOf(
+      '      - name: Smoke test installed macOS DMG',
+    );
+
+    expect(finalSbom, greaterThan(package));
+    expect(finalSbom, lessThan(smoke));
+    expect(
+      workflow,
+      contains(
+        'Contents/Resources/compliance/sbom.spdx.json '
+        r'--target "${{ matrix.target }}"',
+      ),
+    );
+    expect(
+      workflow,
+      contains(
+        r'--output "build/sbom-${{ matrix.target }}.spdx.json" '
+        r'--target "${{ matrix.target }}"',
+      ),
+    );
+    expect(
+      workflow,
+      contains(
+        r'--bundle build/macos/Build/Products/Release/Gapless.app '
+        r'--target "${{ matrix.target }}" '
+        r'--sbom "build/sbom-${{ matrix.target }}.spdx.json"',
+      ),
+    );
+    expect(
+      workflow,
+      contains(
+        r'--bundle "$mount/Gapless.app" --target "${{ matrix.target }}" '
+        r'--sbom "$GITHUB_WORKSPACE/build/sbom-${{ matrix.target }}.spdx.json"',
+      ),
+    );
+    expect(
+      workflow,
+      isNot(
+        contains(
+          'cp macos/Build/Products/Release/Gapless.app/Contents/Resources/'
+          'compliance/sbom.spdx.json',
+        ),
+      ),
+    );
+  });
+
   test('publishes through a protected least-privilege tag job', () {
     final publish = workflow.substring(workflow.indexOf('  publish:'));
     expect(publish, contains('needs: build'));
@@ -105,6 +218,22 @@ void main() {
       workflow.substring(0, workflow.indexOf('  publish:')),
       contains('contents: read'),
     );
+  });
+
+  test('refuses to replace an existing public release or its assets', () {
+    final publish = workflow.substring(workflow.indexOf('  publish:'));
+    final preflight = publish.indexOf(
+      '      - name: Refuse an existing GitHub Release',
+    );
+    final releaseAction = publish.indexOf('softprops/action-gh-release@');
+
+    expect(preflight, greaterThanOrEqualTo(0));
+    expect(preflight, lessThan(releaseAction));
+    expect(publish, contains(r'/releases/tags/$GITHUB_REF_NAME'));
+    expect(publish, contains(r'case "$status" in'));
+    expect(publish, contains('200)'));
+    expect(publish, contains('404)'));
+    expect(publish, contains('overwrite_files: false'));
   });
 
   test('documents the public macOS-only 0.1.0 download', () {
@@ -135,5 +264,10 @@ void main() {
     for (final secret in macosReleaseSecrets) {
       expect(building, contains(secret), reason: secret);
     }
+    expect(building, contains('macos-release environment secrets'));
+    expect(building, isNot(contains('requires these repository secrets')));
+    expect(building, contains('protected `main`'));
+    expect(building, contains('`v*` tag ruleset'));
+    expect(building, contains('blocks tag updates and deletions'));
   });
 }
