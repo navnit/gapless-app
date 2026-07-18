@@ -17,8 +17,7 @@ The development targets are:
 
 - macOS 12 or later on Apple silicon and Intel;
 - Windows 10 or later on x64 (planned);
-- Linux x64 (planned), packaged as an AppImage with an Ubuntu 24.04/glibc 2.39
-  baseline.
+- Linux x64 (planned), packaged as an AppImage with an Ubuntu 24.04/glibc 2.39 baseline.
 
 ## Focused v1 scope
 
