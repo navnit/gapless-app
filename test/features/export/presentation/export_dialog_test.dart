@@ -27,7 +27,10 @@ void main() {
     expect(find.text('Export'), findsOneWidget);
     await tester.tap(find.text('Choose destination…'));
     await tester.pump();
-    expect(find.text('/exports/interview.mp4'), findsOneWidget);
+    expect(
+      find.text(Uri.file('/exports/interview.mp4').toFilePath()),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Export'));
     await tester.pump();
@@ -51,7 +54,10 @@ void main() {
     await _waitForState<ExportComplete>(tester, harness);
     await tester.pumpAndSettle();
     expect(find.text('Export complete'), findsOneWidget);
-    expect(find.text('/exports/interview.mp4'), findsOneWidget);
+    expect(
+      find.text(Uri.file('/exports/interview.mp4').toFilePath()),
+      findsOneWidget,
+    );
     expect(find.text('Show in Folder'), findsOneWidget);
     expect(find.text('Done'), findsOneWidget);
   });
@@ -100,7 +106,10 @@ void main() {
     expect(harness.engine.tasks.single.cancelCount, 1);
     expect(find.text('Export MP4'), findsOneWidget);
     expect(find.text('Export failed'), findsNothing);
-    expect(find.text('/exports/interview.mp4'), findsOneWidget);
+    expect(
+      find.text(Uri.file('/exports/interview.mp4').toFilePath()),
+      findsOneWidget,
+    );
   });
 
   testWidgets('failure supports retry and changing destination', (
@@ -140,7 +149,10 @@ void main() {
     harness.picker.next = Uri.file('/exports/retry.mp4');
     await tester.tap(find.text('Change destination'));
     await tester.pumpAndSettle();
-    expect(find.text('/exports/retry.mp4'), findsOneWidget);
+    expect(
+      find.text(Uri.file('/exports/retry.mp4').toFilePath()),
+      findsOneWidget,
+    );
     expect(find.text('Export MP4'), findsOneWidget);
   });
 

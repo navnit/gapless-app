@@ -20,7 +20,7 @@ jobs:
           - os: windows-2025
             device: windows
             build: windows
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             device: linux
             build: linux
     runs-on: ${{ matrix.os }}

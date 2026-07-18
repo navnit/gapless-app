@@ -564,7 +564,11 @@ void main() {
     );
     expect(
       running.stderrDiagnostics.join('\n'),
-      contains('target exec failed'),
+      contains(
+        Platform.isWindows
+            ? 'target CreateProcessW failed'
+            : 'target exec failed',
+      ),
     );
     expect(_utf8Length(running.stderrDiagnostics), lessThanOrEqualTo(160));
   });

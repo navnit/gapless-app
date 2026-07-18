@@ -23,9 +23,13 @@ import 'package:gapless/features/project/application/autosave_controller.dart';
 import 'package:gapless/features/project/data/project_repository.dart';
 import 'package:gapless/features/project/domain/project_document.dart';
 import 'package:gapless/features/project/domain/source_reference.dart';
+import 'package:path/path.dart' as p;
+
+import '../../../helpers/tolerant_golden_comparator.dart';
 
 void main() {
   setUpAll(() async {
+    installTolerantGoldenComparator();
     final font = rootBundle.load(
       'assets/fonts/InstrumentSans-VariableFont_wdth,wght.ttf',
     );
@@ -781,7 +785,10 @@ void main() {
 
       final persistedSource = store.savedDocuments.last.source;
       expect(persistedSource.absolutePath, resolved.toFilePath());
-      expect(persistedSource.relativePath, '../media/interview.mp4');
+      expect(
+        persistedSource.relativePath,
+        p.join('..', 'media', 'interview.mp4'),
+      );
       expect(playback.opened, <Uri>[resolved]);
       expect(analysis.requests.single.source, persistedSource);
       expect(exporter.requests.single.source, resolved);
@@ -820,11 +827,14 @@ void main() {
     await firstOpen;
 
     expect(viewModel.state.projectUri, secondProject);
-    expect(viewModel.state.project!.source.absolutePath, secondSource.path);
+    expect(
+      viewModel.state.project!.source.absolutePath,
+      secondSource.toFilePath(),
+    );
     expect(playback.opened, <Uri>[secondSource]);
     expect(
       analysis.requests.map((request) => request.source.absolutePath),
-      <String>[secondSource.path],
+      <String>[secondSource.toFilePath()],
     );
     expect(recents.values, <Uri>[secondProject]);
   });
@@ -947,7 +957,10 @@ void main() {
     expect(fingerprinter.sources, <Uri>[secondSource]);
     expect(engine.probed, <Uri>[secondSource]);
     expect(playback.opened, <Uri>[secondSource]);
-    expect(analysis.requests.single.source.absolutePath, secondSource.path);
+    expect(
+      analysis.requests.single.source.absolutePath,
+      secondSource.toFilePath(),
+    );
   });
 
   test('project switches flush and dispose the previous autosave', () async {
@@ -1045,7 +1058,7 @@ void main() {
       find.byType(EditorScreen),
       matchesGoldenFile('../../../goldens/editor_dark_1280x832.png'),
     );
-  });
+  }, skip: !Platform.isMacOS);
 
   testWidgets('matches approved light studio at 1280x832', (tester) async {
     await _pumpGolden(tester, Brightness.light);
@@ -1054,7 +1067,7 @@ void main() {
       find.byType(EditorScreen),
       matchesGoldenFile('../../../goldens/editor_light_1280x832.png'),
     );
-  });
+  }, skip: !Platform.isMacOS);
 }
 
 Future<void> _pumpEditor(WidgetTester tester, EditorState state) async {

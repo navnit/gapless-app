@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,7 @@ import 'package:gapless/features/editor/domain/timeline_segment.dart';
 import 'package:gapless/features/engine/data/auto_editor/auto_editor_adapter.dart';
 import 'package:gapless/features/engine/data/auto_editor/auto_editor_locator.dart';
 import 'package:gapless/features/engine/domain/engine_models.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   late Directory temp;
@@ -24,7 +26,7 @@ void main() {
       processRunner: runner,
       executableLocator: const FakeExecutableLocator('/bundle/auto-editor'),
       temporaryPathFactory: (extension) async =>
-          Uri.file('${temp.path}/temporary$extension'),
+          Uri.file(p.join(temp.path, 'temporary$extension')),
     );
   });
 
@@ -185,16 +187,16 @@ void main() {
   test('levels and detected v3 use compatible non-30 tick timing', () async {
     final source = Uri.file('/absolute/non-30-compatible.mp4');
     final info = _infoWithTimebase('24000/1001');
-    final temporaryV3 = File('${temp.path}/temporary.v3');
+    final temporaryV3 = File(p.join(temp.path, 'temporary.v3'));
     final v3 =
         '''
 {
-  "version":"3","templateFile":"${source.toFilePath()}",
+  "version":"3","templateFile":${jsonEncode(source.toFilePath())},
   "timebase":"24000/1001","background":"#000000",
   "resolution":[1280,720],"samplerate":48000,"layout":"stereo",
   "langs":["und","und"],
-  "v":[[{"src":"${source.toFilePath()}","start":0,"dur":10,"offset":0,"stream":0}]],
-  "a":[[{"src":"${source.toFilePath()}","start":0,"dur":10,"offset":0,"stream":0}]]
+  "v":[[{"src":${jsonEncode(source.toFilePath())},"start":0,"dur":10,"offset":0,"stream":0}]],
+  "a":[[{"src":${jsonEncode(source.toFilePath())},"start":0,"dur":10,"offset":0,"stream":0}]]
 }
 ''';
     runner
@@ -231,7 +233,7 @@ void main() {
     'detect probes then uses exact validated cut arguments and cleans v3',
     () async {
       final source = Uri.file('/absolute/source with spaces.mp4');
-      final temporaryV3 = File('${temp.path}/temporary.v3');
+      final temporaryV3 = File(p.join(temp.path, 'temporary.v3'));
       runner
         ..enqueue(FakeRunningProcess(stdout: _fixtureText('info.json')))
         ..enqueue(
@@ -239,7 +241,7 @@ void main() {
             onStart: (request) => temporaryV3.writeAsStringSync(
               _fixtureText(
                 'detected.v3',
-              ).replaceAll('example.mp4', source.toFilePath()),
+              ).replaceAll('"example.mp4"', jsonEncode(source.toFilePath())),
             ),
           ),
         );
@@ -281,7 +283,7 @@ void main() {
     'detect formats motion, margins, and non-integer speed without locale',
     () async {
       final source = Uri.file('/absolute/motion.mp4');
-      final temporaryV3 = File('${temp.path}/temporary.v3');
+      final temporaryV3 = File(p.join(temp.path, 'temporary.v3'));
       runner
         ..enqueue(FakeRunningProcess(stdout: _fixtureText('info.json')))
         ..enqueue(
@@ -360,8 +362,8 @@ void main() {
     'render writes v3, uses exact balanced args, and reports progress',
     () async {
       final source = Uri.file('/absolute/source.mp4');
-      final destination = Uri.file('${temp.path}/result.partial.mp4');
-      final temporaryV3 = File('${temp.path}/temporary.v3');
+      final destination = Uri.file(p.join(temp.path, 'result.partial.mp4'));
+      final temporaryV3 = File(p.join(temp.path, 'temporary.v3'));
       runner.enqueue(
         FakeRunningProcess(
           stderr: 'Rendering 42.5% ETA 00:10',
@@ -423,7 +425,7 @@ void main() {
             _renderRequest(
               source: Uri.file('/absolute/source.mp4'),
               destination: Uri.file(
-                '${temp.path}/${entry.key.name}.partial.mp4',
+                p.join(temp.path, '${entry.key.name}.partial.mp4'),
               ),
               preset: entry.key,
             ),
@@ -440,8 +442,8 @@ void main() {
   test(
     'render maps bounded diagnostics and removes incomplete files',
     () async {
-      final destination = Uri.file('${temp.path}/failed.partial.mp4');
-      final temporaryV3 = File('${temp.path}/temporary.v3');
+      final destination = Uri.file(p.join(temp.path, 'failed.partial.mp4'));
+      final temporaryV3 = File(p.join(temp.path, 'temporary.v3'));
       runner.enqueue(
         FakeRunningProcess(
           code: 7,
@@ -484,8 +486,8 @@ void main() {
   );
 
   test('render cancellation is typed, idempotent, and cleans files', () async {
-    final destination = Uri.file('${temp.path}/cancelled.partial.mp4');
-    final temporaryV3 = File('${temp.path}/temporary.v3');
+    final destination = Uri.file(p.join(temp.path, 'cancelled.partial.mp4'));
+    final temporaryV3 = File(p.join(temp.path, 'temporary.v3'));
     final process = BlockingFakeRunningProcess(
       onStart: (_) => File(destination.toFilePath()).writeAsBytesSync([1]),
     );
@@ -525,9 +527,9 @@ void main() {
         processRunner: delayedRunner,
         executableLocator: const FakeExecutableLocator('/bundle/auto-editor'),
         temporaryPathFactory: (extension) async =>
-            Uri.file('${temp.path}/delayed$extension'),
+            Uri.file(p.join(temp.path, 'delayed$extension')),
       );
-      final destination = Uri.file('${temp.path}/delayed.partial.mp4');
+      final destination = Uri.file(p.join(temp.path, 'delayed.partial.mp4'));
       final process = BlockingFakeRunningProcess(
         onStart: (_) => File(destination.toFilePath()).writeAsBytesSync([1]),
       );
@@ -554,7 +556,7 @@ void main() {
       await resultExpectation;
       expect(process.cancelCount, 1);
       expect(File(destination.toFilePath()).existsSync(), isFalse);
-      expect(File('${temp.path}/delayed.v3').existsSync(), isFalse);
+      expect(File(p.join(temp.path, 'delayed.v3')).existsSync(), isFalse);
     },
   );
 
@@ -566,13 +568,15 @@ void main() {
         processRunner: delayedRunner,
         executableLocator: const FakeExecutableLocator('/bundle/auto-editor'),
         temporaryPathFactory: (extension) async =>
-            Uri.file('${temp.path}/native-cleanup$extension'),
+            Uri.file(p.join(temp.path, 'native-cleanup$extension')),
       );
       final process = DelayedCancellationRunningProcess();
       final task = delayedAdapter.render(
         _renderRequest(
           source: Uri.file('/absolute/source.mp4'),
-          destination: Uri.file('${temp.path}/native-cleanup.partial.mp4'),
+          destination: Uri.file(
+            p.join(temp.path, 'native-cleanup.partial.mp4'),
+          ),
           preset: RenderPreset.balanced,
         ),
       );
@@ -616,7 +620,7 @@ void main() {
     final task = adapter.render(
       _renderRequest(
         source: Uri.file('/absolute/source.mp4'),
-        destination: Uri.file('${temp.path}/pre-body.partial.mp4'),
+        destination: Uri.file(p.join(temp.path, 'pre-body.partial.mp4')),
         preset: RenderPreset.balanced,
       ),
     );
@@ -637,12 +641,12 @@ void main() {
       processRunner: failingRunner,
       executableLocator: const FakeExecutableLocator('/bundle/auto-editor'),
       temporaryPathFactory: (extension) async =>
-          Uri.file('${temp.path}/start-failure$extension'),
+          Uri.file(p.join(temp.path, 'start-failure$extension')),
     );
     final task = failingAdapter.render(
       _renderRequest(
         source: Uri.file('/absolute/source.mp4'),
-        destination: Uri.file('${temp.path}/start-failure.partial.mp4'),
+        destination: Uri.file(p.join(temp.path, 'start-failure.partial.mp4')),
         preset: RenderPreset.balanced,
       ),
     );

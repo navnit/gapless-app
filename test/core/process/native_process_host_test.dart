@@ -269,6 +269,16 @@ void main() {
     );
   });
 
+  test('Linux build jobs match the pinned engine runtime baseline', () {
+    final verifyWorkflow = _source('.github/workflows/verify.yml');
+    final releaseWorkflow = _source('.github/workflows/release.yml');
+    final readme = _source('README.md');
+
+    expect(verifyWorkflow, contains('- os: ubuntu-24.04'));
+    expect(releaseWorkflow, contains('os: ubuntu-24.04'));
+    expect(readme, contains('Ubuntu 24.04/glibc 2.39 baseline'));
+  });
+
   test('production code contains no shell or process-table helpers', () {
     final production = [
       _source('lib/core/process/io_process_runner.dart'),
