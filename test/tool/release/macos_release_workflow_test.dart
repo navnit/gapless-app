@@ -3,6 +3,15 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  const macosReleaseSecrets = <String>[
+    'MACOS_P12_BASE64',
+    'MACOS_P12_PASSWORD',
+    'MACOS_KEYCHAIN_PASSWORD',
+    'MACOS_NOTARY_KEY_BASE64',
+    'MACOS_NOTARY_KEY_ID',
+    'MACOS_NOTARY_ISSUER',
+    'MACOS_SIGN_IDENTITY',
+  ];
   late File workflowFile;
   var workflow = '';
 
@@ -71,9 +80,7 @@ void main() {
 
   test('requires installed-artifact proof before upload', () {
     for (final required in <String>[
-      'MACOS_P12_BASE64',
-      'MACOS_NOTARY_KEY_BASE64',
-      'MACOS_SIGN_IDENTITY',
+      ...macosReleaseSecrets,
       'notarytool store-credentials',
       'package_dmg.sh',
       'spctl --assess --type execute',
@@ -113,5 +120,20 @@ void main() {
     expect(building, contains('Ubuntu 24.04/glibc 2.39 baseline'));
     expect(building, contains('v0.1.0'));
     expect(building, contains('macos-release'));
+    expect(building, contains('first public release target'));
+    expect(
+      building,
+      contains(
+        'Public downloads become available only after the protected tag '
+        'workflow succeeds and approval completes.',
+      ),
+    );
+    expect(
+      building,
+      contains('https://github.com/navnit/gapless/releases/latest'),
+    );
+    for (final secret in macosReleaseSecrets) {
+      expect(building, contains(secret), reason: secret);
+    }
   });
 }

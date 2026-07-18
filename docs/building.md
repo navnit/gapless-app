@@ -1,7 +1,10 @@
 # Building and releasing Gapless
 
-Gapless 0.1.0 publishes only macOS 12+ Apple Silicon and Intel DMGs. Windows
-10+ x64 and Linux x64 remain planned targets; the Linux target uses an Ubuntu 24.04/glibc 2.39 baseline.
+Gapless 0.1.0 is the first public release target, for macOS 12+ Apple Silicon
+and Intel DMGs. Public downloads become available only after the protected tag workflow succeeds and approval completes.
+After that success, download assets from the [latest GitHub Release](https://github.com/navnit/gapless/releases/latest).
+Windows 10+ x64 and Linux x64 remain planned targets; the Linux target uses an
+Ubuntu 24.04/glibc 2.39 baseline.
 
 ## Reproducible inputs
 
