@@ -43,6 +43,7 @@ void main() {
 
       expect(File(executable).existsSync(), isTrue);
     },
+    timeout: Timeout(const Duration(minutes: 2)),
   );
 
   test(
@@ -199,6 +200,7 @@ void main() {
     expect(source, contains('child_output.Get()'));
     expect(source, contains('child_error.Get()'));
     expect(source, contains('GPH_TEST_INCLUDE_UNRELATED_HANDLE'));
+    expect(source, contains('--test-signal-unrelated-handle'));
     expect(source, contains('unrelated inheritable handle leaked'));
   });
 

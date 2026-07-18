@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi';
 import 'dart:io';
 
 Future<void> main(List<String> arguments) async {
@@ -20,19 +19,6 @@ Future<void> main(List<String> arguments) async {
         }),
         flush: true,
       );
-    case 'check-unrelated-handle':
-      if (!Platform.isWindows) {
-        throw UnsupportedError('Windows-only fixture mode');
-      }
-      final rawHandle = Platform.environment['GPH_TEST_UNRELATED_HANDLE'];
-      if (rawHandle == null) {
-        throw StateError('Native host did not publish its test handle');
-      }
-      final setEvent = DynamicLibrary.open(
-        'kernel32.dll',
-      ).lookupFunction<Int32 Function(IntPtr), int Function(int)>('SetEvent');
-      setEvent(int.parse(rawHandle));
-      File(arguments[1]).writeAsStringSync('attempted', flush: true);
     case 'fail':
       stdout.writeln('before failure');
       stderr.writeln('structured diagnostic');

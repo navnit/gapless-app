@@ -146,35 +146,24 @@ void main() {
   );
 
   _windowsHostTest('does not leak an unrelated inheritable handle', () async {
-    final resultPath = p.join(temp.path, 'handle-privacy.txt');
     final running = await runner.start(
       ProcessRequest(
-        executable: _dartExecutable,
-        arguments: [
-          _fixturePath('process_fixture.dart'),
-          'check-unrelated-handle',
-          resultPath,
-        ],
+        executable: nativeProcessHost.executablePath,
+        arguments: const ['--test-signal-unrelated-handle'],
         environment: const {'GPH_TEST_CREATE_UNRELATED_HANDLE': '1'},
       ),
     );
 
-    expect(await running.exitCode, 0);
-    expect(await File(resultPath).readAsString(), 'attempted');
+    expect(await running.exitCode, 42);
   });
 
   _windowsHostTest(
     'detects intentional unrelated handle inheritance',
     () async {
-      final resultPath = p.join(temp.path, 'intentional-handle-leak.txt');
       final running = await runner.start(
         ProcessRequest(
-          executable: _dartExecutable,
-          arguments: [
-            _fixturePath('process_fixture.dart'),
-            'check-unrelated-handle',
-            resultPath,
-          ],
+          executable: nativeProcessHost.executablePath,
+          arguments: const ['--test-signal-unrelated-handle'],
           environment: const {
             'GPH_TEST_CREATE_UNRELATED_HANDLE': '1',
             'GPH_TEST_INCLUDE_UNRELATED_HANDLE': '1',
@@ -183,7 +172,6 @@ void main() {
       );
 
       expect(await running.exitCode, isNot(0));
-      expect(await File(resultPath).readAsString(), 'attempted');
       expect(
         running.stderrDiagnostics.join('\n'),
         contains('unrelated inheritable handle leaked'),
