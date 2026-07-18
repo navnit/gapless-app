@@ -60,7 +60,8 @@ From the repository root:
 flutter pub get
 dart run tool/engine/fetch_engine.dart
 dart run tool/engine/fetch_engine.dart --verify-only
-flutter run -d macos # or windows / linux on the matching host
+./script/build_and_run.sh # macOS; keeps signed build products off File Provider storage
+flutter run -d windows # or linux on the matching host
 ```
 
 The intended verification gate is:

@@ -54,6 +54,44 @@ void main() {
     },
   );
 
+  test('probe reports audio-only input as an unsupported source', () async {
+    const audioOnlyInfo = '''
+{
+  "/absolute/voice-over.m4a": {
+    "type": "media",
+    "recommendedTimebase": "30/1",
+    "video": [],
+    "audio": [{
+      "codec": "aac",
+      "layout": "mono",
+      "samplerate": 48000,
+      "duration": 89.28,
+      "bitrate": 244579,
+      "lang": "und"
+    }],
+    "subtitle": [],
+    "image": [],
+    "container": {"duration": 89.28, "bitrate": 246189}
+  }
+}
+''';
+    runner.enqueue(FakeRunningProcess(stdout: audioOnlyInfo));
+    final source = Uri.file('/absolute/voice-over.m4a');
+
+    await expectLater(
+      adapter.probe(source).result,
+      throwsA(
+        isA<EngineContractFailure>()
+            .having((failure) => failure.operation, 'operation', 'probe')
+            .having(
+              (failure) => failure.reason,
+              'reason',
+              EngineContractReason.unsupportedSources,
+            ),
+      ),
+    );
+  });
+
   test('levels probes then supplies exact non-30 rational timebase', () async {
     runner
       ..enqueue(FakeRunningProcess(stdout: _infoWithTimebase('24000/1001')))

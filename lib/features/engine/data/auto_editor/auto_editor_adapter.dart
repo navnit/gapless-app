@@ -213,6 +213,15 @@ final class AutoEditorAdapter implements EnginePort {
     );
     try {
       return AutoEditorParsers.parseInfoJson(output.stdout);
+    } on UnsupportedError catch (error) {
+      throw EngineContractFailure(
+        operation: operation,
+        reason: EngineContractReason.unsupportedSources,
+        diagnostics: _boundedDiagnostics([
+          ...output.diagnostics,
+          error.toString(),
+        ]),
+      );
     } on FormatException catch (error) {
       throw EngineContractFailure(
         operation: operation,

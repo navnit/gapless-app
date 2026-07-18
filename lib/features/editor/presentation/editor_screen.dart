@@ -78,6 +78,7 @@ final class EditorScreen extends StatelessWidget {
                   if (state.phase == EditorPhase.empty)
                     Expanded(
                       child: _EmptyWorkspace(
+                        message: state.message,
                         onOpen: () => unawaited(viewModel.openVideo()),
                         onOpenProject: () => unawaited(viewModel.openProject()),
                       ),
@@ -292,8 +293,13 @@ bool _isEditingText() {
 }
 
 final class _EmptyWorkspace extends StatelessWidget {
-  const _EmptyWorkspace({required this.onOpen, required this.onOpenProject});
+  const _EmptyWorkspace({
+    required this.message,
+    required this.onOpen,
+    required this.onOpenProject,
+  });
 
+  final String? message;
   final VoidCallback onOpen;
   final VoidCallback onOpenProject;
 
@@ -310,6 +316,20 @@ final class _EmptyWorkspace extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         const Text('Gapless keeps everything local on this computer.'),
+        if (message != null) ...<Widget>[
+          const SizedBox(height: 16),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Text(
+              message!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 18),
         FilledButton(onPressed: onOpen, child: const Text('Open Video')),
         const SizedBox(height: 4),
@@ -362,16 +382,6 @@ final class _TitleBar extends StatelessWidget {
               'Gapless',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
             ),
-            const Spacer(),
-            Icon(Icons.remove, size: 15, color: Theme.of(context).hintColor),
-            const SizedBox(width: 14),
-            Icon(
-              Icons.crop_square,
-              size: 13,
-              color: Theme.of(context).hintColor,
-            ),
-            const SizedBox(width: 14),
-            Icon(Icons.close, size: 14, color: Theme.of(context).hintColor),
           ],
         ),
       ),

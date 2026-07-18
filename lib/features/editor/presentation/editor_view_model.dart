@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:gapless/core/errors/app_failure.dart';
+import 'package:gapless/core/errors/failure_presenter.dart';
 import 'package:gapless/core/time/source_time_range.dart';
 import 'package:gapless/features/analysis/application/analysis_coordinator.dart';
 import 'package:gapless/features/editor/domain/analysis_settings.dart';
@@ -258,6 +260,7 @@ final class EditorViewModel extends ChangeNotifier {
   Future<void> openVideo() async {
     final runtime = this.runtime;
     if (runtime == null) return;
+    final recoveryState = _state;
     final pickerAttempt = ++_pickerAttempt;
     int? generation;
     try {
@@ -267,7 +270,11 @@ final class EditorViewModel extends ChangeNotifier {
       await _openVideo(runtime, generation, source);
     } on Object catch (error) {
       if (generation case final activeGeneration?) {
-        _reportOperationFailure(activeGeneration, error);
+        _reportOperationFailure(
+          activeGeneration,
+          error,
+          recoveryState: recoveryState,
+        );
       } else {
         _reportPickerFailure(pickerAttempt, error);
       }
@@ -326,11 +333,10 @@ final class EditorViewModel extends ChangeNotifier {
         message: 'Reading video metadata…',
       ),
     );
-    await _save(project, generation: generation);
-    if (!_isOperationCurrent(generation)) return;
-
     final metadata = await _probeSource(source, generation);
     if (metadata == null) return;
+    await _save(project, generation: generation);
+    if (!_isOperationCurrent(generation)) return;
     if (!await _openPlayback(source, generation, project.ui.previewMode)) {
       return;
     }
@@ -364,6 +370,7 @@ final class EditorViewModel extends ChangeNotifier {
   Future<void> openProject([Uri? project]) async {
     final runtime = this.runtime;
     if (runtime == null) return;
+    final recoveryState = _state;
     final pickerAttempt = ++_pickerAttempt;
     int? generation;
     try {
@@ -373,7 +380,11 @@ final class EditorViewModel extends ChangeNotifier {
       await _openProject(runtime, generation, selected);
     } on Object catch (error) {
       if (generation case final activeGeneration?) {
-        _reportOperationFailure(activeGeneration, error);
+        _reportOperationFailure(
+          activeGeneration,
+          error,
+          recoveryState: recoveryState,
+        );
       } else {
         _reportPickerFailure(pickerAttempt, error);
       }
@@ -544,7 +555,7 @@ final class EditorViewModel extends ChangeNotifier {
       }
     } on Object catch (error) {
       if (_isOperationCurrent(generation)) {
-        _setState(_state.copyWith(message: error.toString()));
+        _setState(_state.copyWith(message: _failureMessage(error)));
       }
     }
   }
@@ -613,7 +624,7 @@ final class EditorViewModel extends ChangeNotifier {
       );
     } on Object catch (error) {
       if (_isOperationCurrent(generation) && _state.projectUri == projectUri) {
-        _setState(_state.copyWith(message: error.toString()));
+        _setState(_state.copyWith(message: _failureMessage(error)));
       }
     }
   }
@@ -1064,17 +1075,17 @@ final class EditorViewModel extends ChangeNotifier {
 
   void _reportPickerFailure(int attempt, Object error) {
     if (!_isPickerAttemptCurrent(attempt)) return;
-    _setState(_state.copyWith(message: error.toString()));
+    _setState(_state.copyWith(message: _failureMessage(error)));
   }
 
-  void _reportOperationFailure(int generation, Object error) {
+  void _reportOperationFailure(
+    int generation,
+    Object error, {
+    EditorState? recoveryState,
+  }) {
     if (!_isOperationCurrent(generation)) return;
-    _setState(
-      _state.copyWith(
-        phase: _state.project == null ? EditorPhase.empty : EditorPhase.ready,
-        message: error.toString(),
-      ),
-    );
+    final current = recoveryState ?? _state;
+    _setState(current.copyWith(message: _failureMessage(error)));
   }
 
   Future<void> _queueAutosaveDisposal(AutosaveController? autosave) {
@@ -1214,7 +1225,11 @@ final class EditorViewModel extends ChangeNotifier {
               onError: (Object error, StackTrace _) {
                 if (_isOperationCurrent(request.generation)) {
                   _setState(
-                    _state.copyWith(message: 'Playback update failed: $error'),
+                    _state.copyWith(
+                      message:
+                          'Preview could not be updated. Reopen the video and '
+                          'try again.',
+                    ),
                   );
                 }
               },
@@ -1223,7 +1238,7 @@ final class EditorViewModel extends ChangeNotifier {
         }
         unawaited(_save(updated, generation: request.generation));
       case AnalysisFailed(:final failure):
-        _setState(_state.copyWith(message: failure.toString()));
+        _setState(_state.copyWith(message: _failureMessage(failure)));
     }
   }
 
@@ -1274,6 +1289,15 @@ final class EditorViewModel extends ChangeNotifier {
       }
     }
   }
+}
+
+String _failureMessage(Object error) {
+  if (error is OperationCancelled) return 'Operation cancelled.';
+  if (error is AppFailure) {
+    final presentation = FailurePresenter.present(error);
+    return '${presentation.title}. ${presentation.body}';
+  }
+  return 'Something went wrong. Please try again.';
 }
 
 final class _EditorCommand {
