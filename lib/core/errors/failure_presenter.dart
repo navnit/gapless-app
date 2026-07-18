@@ -67,6 +67,15 @@ abstract final class FailurePresenter {
       primaryAction: FailureAction.reinstall,
       secondaryAction: FailureAction.copyDiagnostics,
     ),
+    EngineContractFailure(reason: EngineContractReason.unsupportedSources) =>
+      const FailurePresentation(
+        title: 'A video file is required',
+        body:
+            'Audio-only files are not supported yet. Choose a video file and '
+            'try again.',
+        primaryAction: FailureAction.retry,
+        secondaryAction: FailureAction.copyDiagnostics,
+      ),
     EngineContractFailure() => const FailurePresentation(
       title: 'Editing engine could not finish',
       body:

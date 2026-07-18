@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi';
 import 'dart:io';
 
 Future<void> main(List<String> arguments) async {
@@ -18,24 +17,6 @@ Future<void> main(List<String> arguments) async {
           'environment': Platform.environment['GAPLESS_TEST_VALUE'],
           'parentSecret': Platform.environment['GAPLESS_PARENT_SECRET'],
         }),
-        flush: true,
-      );
-    case 'check-unrelated-handle':
-      if (!Platform.isWindows) {
-        throw UnsupportedError('Windows-only fixture mode');
-      }
-      final rawHandle = Platform.environment['GPH_TEST_UNRELATED_HANDLE'];
-      if (rawHandle == null) {
-        throw StateError('Native host did not publish its test handle');
-      }
-      final waitForSingleObject = DynamicLibrary.open('kernel32.dll')
-          .lookupFunction<
-            Uint32 Function(IntPtr, Uint32),
-            int Function(int, int)
-          >('WaitForSingleObject');
-      final waitResult = waitForSingleObject(int.parse(rawHandle), 0);
-      File(arguments[1]).writeAsStringSync(
-        waitResult == 0xFFFFFFFF ? 'invalid' : 'inherited',
         flush: true,
       );
     case 'fail':

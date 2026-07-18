@@ -41,6 +41,10 @@ jobs:
           cache: true
       - name: Resolve dependencies
         run: flutter pub get
+      - name: Fetch verified Auto-Editor engine
+        run: dart run tool/engine/fetch_engine.dart
+      - name: Verify Auto-Editor engine
+        run: dart run tool/engine/fetch_engine.dart --verify-only
       - name: Run native process lifecycle tests
         run: flutter test test/core/process
       - name: Build Windows bundle

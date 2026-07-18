@@ -69,28 +69,9 @@ final class SettingsSidebar extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 18),
-            Row(
-              children: <Widget>[
-                const _SectionLabel('THRESHOLD'),
-                const Spacer(),
-                Text(
-                  '${settings.thresholdDb.round()} dB',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            Slider(
-              key: const ValueKey<String>('settings.threshold'),
+            _ThresholdSetting(
               value: settings.thresholdDb.clamp(-40, -6),
-              min: -40,
-              max: -6,
-              divisions: 34,
-              onChanged: onThresholdChanged,
+              onCommitted: onThresholdChanged,
             ),
             Text(
               'Anything quieter than this gets cut. Changes update the timeline automatically.',
@@ -344,6 +325,56 @@ final class _StepButton extends StatelessWidget {
         child: Center(child: Text(label, style: const TextStyle(fontSize: 14))),
       ),
     ),
+  );
+}
+
+final class _ThresholdSetting extends StatefulWidget {
+  const _ThresholdSetting({required this.value, required this.onCommitted});
+
+  final double value;
+  final ValueChanged<double> onCommitted;
+
+  @override
+  State<_ThresholdSetting> createState() => _ThresholdSettingState();
+}
+
+final class _ThresholdSettingState extends State<_ThresholdSetting> {
+  double? _dragValue;
+
+  double get _value => _dragValue ?? widget.value;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: <Widget>[
+      Row(
+        children: <Widget>[
+          const _SectionLabel('THRESHOLD'),
+          const Spacer(),
+          Text(
+            '${_value.round()} dB',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.primary,
+              fontFamily: 'monospace',
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+      Slider(
+        key: const ValueKey<String>('settings.threshold'),
+        value: _value,
+        min: -40,
+        max: -6,
+        divisions: 34,
+        onChangeStart: (value) => setState(() => _dragValue = value),
+        onChanged: (value) => setState(() => _dragValue = value),
+        onChangeEnd: (value) {
+          setState(() => _dragValue = null);
+          widget.onCommitted(value);
+        },
+      ),
+    ],
   );
 }
 

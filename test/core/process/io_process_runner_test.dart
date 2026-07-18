@@ -146,22 +146,38 @@ void main() {
   );
 
   _windowsHostTest('does not leak an unrelated inheritable handle', () async {
-    final resultPath = p.join(temp.path, 'handle-privacy.txt');
     final running = await runner.start(
       ProcessRequest(
-        executable: _dartExecutable,
-        arguments: [
-          _fixturePath('process_fixture.dart'),
-          'check-unrelated-handle',
-          resultPath,
-        ],
+        executable: nativeProcessHost.executablePath,
+        arguments: const ['--test-signal-unrelated-handle'],
         environment: const {'GPH_TEST_CREATE_UNRELATED_HANDLE': '1'},
       ),
     );
 
-    expect(await running.exitCode, 0);
-    expect(await File(resultPath).readAsString(), 'invalid');
+    expect(await running.exitCode, 42);
   });
+
+  _windowsHostTest(
+    'detects intentional unrelated handle inheritance',
+    () async {
+      final running = await runner.start(
+        ProcessRequest(
+          executable: nativeProcessHost.executablePath,
+          arguments: const ['--test-signal-unrelated-handle'],
+          environment: const {
+            'GPH_TEST_CREATE_UNRELATED_HANDLE': '1',
+            'GPH_TEST_INCLUDE_UNRELATED_HANDLE': '1',
+          },
+        ),
+      );
+
+      expect(await running.exitCode, isNot(0));
+      expect(
+        running.stderrDiagnostics.join('\n'),
+        contains('unrelated inheritable handle leaked'),
+      );
+    },
+  );
 
   _nativeHostTest(
     'exposes a nonzero exit code without losing output',
@@ -564,7 +580,11 @@ void main() {
     );
     expect(
       running.stderrDiagnostics.join('\n'),
-      contains('target exec failed'),
+      contains(
+        Platform.isWindows
+            ? 'target CreateProcessW failed'
+            : 'target exec failed',
+      ),
     );
     expect(_utf8Length(running.stderrDiagnostics), lessThanOrEqualTo(160));
   });

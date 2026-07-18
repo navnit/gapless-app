@@ -17,7 +17,7 @@ The intended desktop targets are:
 
 - macOS 12 or later on Apple silicon and Intel;
 - Windows 10 or later on x64;
-- Linux x64, packaged as an AppImage with an Ubuntu 22.04/glibc 2.35 baseline.
+- Linux x64, packaged as an AppImage with an Ubuntu 24.04/glibc 2.39 baseline.
 
 Windows and Linux release validation has not been completed.
 
@@ -60,7 +60,8 @@ From the repository root:
 flutter pub get
 dart run tool/engine/fetch_engine.dart
 dart run tool/engine/fetch_engine.dart --verify-only
-flutter run -d macos # or windows / linux on the matching host
+./script/build_and_run.sh # macOS; keeps signed build products off File Provider storage
+flutter run -d windows # or linux on the matching host
 ```
 
 The intended verification gate is:
