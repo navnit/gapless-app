@@ -1,5 +1,10 @@
 .superpowers/
 .worktrees/
+
+# Manifest-pinned engine binaries are fetched for development and packaging.
+# Release workflows verify them before embedding; do not commit the binaries.
+/assets/engine/*/auto-editor
+/assets/engine/*/auto-editor.exe
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies

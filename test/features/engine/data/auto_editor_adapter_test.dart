@@ -354,6 +354,8 @@ void main() {
         'medium',
         '-c:a',
         'aac',
+        '-layout',
+        'stereo',
         '-b:a',
         '192k',
       ]);
@@ -392,7 +394,8 @@ void main() {
       final arguments = runner.requests.last.arguments;
       expect(arguments[6], entry.value[0]);
       expect(arguments[8], entry.value[1]);
-      expect(arguments[12], entry.value[2]);
+      expect(arguments[12], 'stereo');
+      expect(arguments[14], entry.value[2]);
     }
   });
 

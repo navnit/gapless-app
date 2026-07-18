@@ -284,6 +284,7 @@
 				A4A000042EA0000000000004 /* Embed Process Host */,
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
+				A5E000012EA0000000000001 /* Embed Auto-Editor Engine */,
 				5729BA818990D74CF1A461E7 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
@@ -396,6 +397,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "echo \"$PRODUCT_NAME.app\" > \"$PROJECT_DIR\"/Flutter/ephemeral/.app_filename && \"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh embed\n";
+		};
+		A5E000012EA0000000000001 /* Embed Auto-Editor Engine */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Auto-Editor Engine";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/engine/auto-editor",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/engine/manifest.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/compliance/THIRD_PARTY_NOTICES.md",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/compliance/SOURCE_OFFER.md",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nengine_arch=${NATIVE_ARCH_ACTUAL:-$CURRENT_ARCH}\ncase \"$engine_arch\" in\n  arm64) engine_target=macos-arm64 ;;\n  x86_64) engine_target=macos-x64 ;;\n  *) echo \"error: Unsupported macOS engine architecture: $engine_arch\" >&2; exit 1 ;;\nesac\nrepo_root=\"$PROJECT_DIR/..\"\nengine_source=\"$repo_root/assets/engine/$engine_target/auto-editor\"\nmanifest_source=\"$repo_root/assets/engine/manifest.json\"\nresources_destination=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\nengine_destination=\"$resources_destination/engine\"\ncompliance_destination=\"$resources_destination/compliance\"\nif [ ! -f \"$engine_source\" ]; then\n  echo \"error: Missing verified Auto-Editor binary. Run dart run tool/engine/fetch_engine.dart\" >&2\n  exit 1\nfi\nmkdir -p \"$engine_destination\" \"$compliance_destination\"\n/usr/bin/ditto \"$engine_source\" \"$engine_destination/auto-editor\"\n/bin/chmod 755 \"$engine_destination/auto-editor\"\n/usr/bin/ditto \"$manifest_source\" \"$engine_destination/manifest.json\"\n/usr/bin/ditto \"$repo_root/third_party/THIRD_PARTY_NOTICES.md\" \"$compliance_destination/THIRD_PARTY_NOTICES.md\"\n/usr/bin/ditto \"$repo_root/third_party/SOURCE_OFFER.md\" \"$compliance_destination/SOURCE_OFFER.md\"\nif [ -f \"$repo_root/build/release/sbom.spdx.json\" ]; then\n  /usr/bin/ditto \"$repo_root/build/release/sbom.spdx.json\" \"$compliance_destination/sbom.spdx.json\"\nfi\n";
 		};
 		33CC111E2044C6BF0003C045 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;

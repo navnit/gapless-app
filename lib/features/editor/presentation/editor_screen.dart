@@ -83,6 +83,19 @@ final class EditorScreen extends StatelessWidget {
                       ),
                     )
                   else ...<Widget>[
+                    if (state.metadata == null && state.message != null)
+                      MaterialBanner(
+                        content: Text(state.message!),
+                        actions: <Widget>[
+                          TextButton.icon(
+                            key: const ValueKey<String>('source.relocate'),
+                            onPressed: () =>
+                                unawaited(viewModel.relocateSource()),
+                            icon: const Icon(Icons.folder_open),
+                            label: const Text('Locate source…'),
+                          ),
+                        ],
+                      ),
                     StudioToolbar(
                       state: state,
                       onOpenVideo: () => unawaited(viewModel.openVideo()),
@@ -92,6 +105,22 @@ final class EditorScreen extends StatelessWidget {
                           unawaited(viewModel.setPreviewMode(mode)),
                       onExport: () => unawaited(viewModel.export()),
                     ),
+                    if (state.phase == EditorPhase.analyzing &&
+                        state.timeline != null &&
+                        state.levels != null)
+                      MaterialBanner(
+                        content: const Text(
+                          'Analyzing updated detection settings…',
+                        ),
+                        actions: <Widget>[
+                          TextButton(
+                            key: const ValueKey<String>('analysis.cancel'),
+                            onPressed: () =>
+                                unawaited(viewModel.cancelAnalysis()),
+                            child: const Text('Cancel analysis'),
+                          ),
+                        ],
+                      ),
                     const Divider(height: 1),
                     Expanded(
                       child: Row(

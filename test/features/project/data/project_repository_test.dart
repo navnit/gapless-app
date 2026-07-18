@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -20,6 +21,19 @@ void main() {
       _fixtureJson.replaceFirst('"appVersion":"0.1.0"', '"appVersion":"0.2.0"'),
     );
     path = Uri.file('/projects/edit.gapless');
+  });
+
+  test('local source reader completes a range read before closing', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'gapless-source-reader-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/source.bin');
+    await source.writeAsBytes(List<int>.generate(32, (index) => index));
+
+    const reader = LocalSourceSampleReader();
+
+    expect(await reader.readRange(source.uri, 7, 5), <int>[7, 8, 9, 10, 11]);
   });
 
   group('ProjectRepository atomic persistence', () {

@@ -7,16 +7,17 @@ suggested cuts, and export a tighter MP4.
 
 ## Project status
 
-Gapless is an early MVP under active development. The repository contains
-source and test contracts for the editor workflow, but it does not yet publish
-packaged releases. Full Flutter verification and installed native workflows
-remain pending; do not treat the current checkout as release-validated.
+Gapless is an MVP under active development. The repository contains the full
+offline editor workflow, installed native integration tests, and reproducible
+packaging definitions. Tagged packages are built only by the release workflow;
+the repository does not claim an artifact is published until that workflow has
+signed, verified, and uploaded it.
 
 The intended desktop targets are:
 
 - macOS 12 or later on Apple silicon and Intel;
 - Windows 10 or later on x64;
-- Linux x64, eventually packaged as an AppImage.
+- Linux x64, packaged as an AppImage with an Ubuntu 22.04/glibc 2.35 baseline.
 
 Windows and Linux release validation has not been completed.
 
@@ -71,10 +72,10 @@ flutter test
 flutter test integration_test -d macos # matching native target on CI
 ```
 
-Native integration contracts are currently explicitly skipped because the
-public installed-app driver, native fixture injection, restart/reopen
-automation, and output-probe hook belong to the next integration tranche. A
-fake engine is not accepted as proof of the bundled native workflow.
+Native integration tests generate a tiny deterministic video, launch the real
+desktop bundle, use its pinned Auto-Editor binary, restart/reopen projects,
+exercise source relocation and failed-destination recovery, and probe the
+rendered MP4. A fake engine is not accepted as proof of this workflow.
 
 Release builds will use the matching host command:
 
@@ -84,8 +85,9 @@ flutter build windows --release
 flutter build linux --release
 ```
 
-These build commands describe the intended workflow; this README does not claim
-that release artifacts have been produced or validated.
+Run `dart run tool/release/verify_bundle.dart --bundle PATH --target TARGET` on
+the resulting bundle. See [the build and release guide](docs/building.md) for deterministic
+layouts, compliance files, signing, notarization, and installer commands.
 
 ## Design and implementation material
 

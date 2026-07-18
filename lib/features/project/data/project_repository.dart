@@ -94,7 +94,7 @@ final class LocalSourceSampleReader implements SourceSampleReader {
     final handle = await File.fromUri(source).open();
     try {
       await handle.setPosition(offset);
-      return handle.read(length);
+      return await handle.read(length);
     } finally {
       await handle.close();
     }

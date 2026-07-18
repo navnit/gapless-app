@@ -22,6 +22,7 @@ final class AutoEditorTarget {
     required this.url,
     required this.installedFile,
     required this.sha256,
+    this.installedSha256,
   }) {
     if (!_targetNames.contains(name)) {
       throw ArgumentError.value(name, 'name');
@@ -46,6 +47,10 @@ final class AutoEditorTarget {
     if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(sha256)) {
       throw ArgumentError.value(sha256, 'sha256');
     }
+    if (installedSha256 != null &&
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(installedSha256!)) {
+      throw ArgumentError.value(installedSha256, 'installedSha256');
+    }
   }
 
   final String name;
@@ -53,6 +58,7 @@ final class AutoEditorTarget {
   final Uri url;
   final String installedFile;
   final String sha256;
+  final String? installedSha256;
 }
 
 final class AutoEditorManifest {
@@ -76,18 +82,21 @@ final class AutoEditorManifest {
       final targets = <String, AutoEditorTarget>{};
       for (final name in _targetNames) {
         final node = _object(targetNodes[name], name);
-        _requireKeys(node, const {
-          'asset',
-          'url',
-          'installedFile',
-          'sha256',
-        }, name);
+        _requireAllowedKeys(
+          node,
+          const {'asset', 'url', 'installedFile', 'sha256'},
+          const {'installedSha256'},
+          name,
+        );
         final target = AutoEditorTarget(
           name: name,
           asset: _string(node['asset'], '$name.asset'),
           url: Uri.parse(_string(node['url'], '$name.url')),
           installedFile: _string(node['installedFile'], '$name.installedFile'),
           sha256: _string(node['sha256'], '$name.sha256'),
+          installedSha256: node['installedSha256'] == null
+              ? null
+              : _string(node['installedSha256'], '$name.installedSha256'),
         );
         if (!_matchesApprovedTarget(target)) {
           throw FormatException('Unexpected pinned target: $name');
@@ -159,9 +168,17 @@ final class AutoEditorLocator implements AutoEditorExecutableLocator {
         diagnostics: const ['Manifest target does not match requested target'],
       );
     }
-    final executablePath = p.normalize(
+    final bundledPath = p.normalize(
+      p.join(installRoot, selected.installedFile),
+    );
+    final developmentPath = p.normalize(
       p.join(installRoot, selected.name, selected.installedFile),
     );
+    final executablePath =
+        await FileSystemEntity.type(bundledPath, followLinks: false) ==
+            FileSystemEntityType.file
+        ? bundledPath
+        : developmentPath;
     if (!p.isAbsolute(executablePath) ||
         !p.isWithin(p.normalize(installRoot), executablePath)) {
       throw EngineMissingFailure(expectedLocation: Uri.file(executablePath));
@@ -177,9 +194,10 @@ final class AutoEditorLocator implements AutoEditorExecutableLocator {
     }
 
     final actualSha256 = await hashFileSha256(executable);
-    if (actualSha256 != selected.sha256) {
+    final expectedSha256 = selected.installedSha256 ?? selected.sha256;
+    if (actualSha256 != expectedSha256) {
       throw EngineChecksumFailure(
-        expectedSha256: selected.sha256,
+        expectedSha256: expectedSha256,
         actualSha256: actualSha256,
       );
     }
@@ -226,6 +244,42 @@ String currentAutoEditorTarget() {
     Abi.linuxX64 => 'linux-x64',
     final abi => throw UnsupportedError(
       'Unsupported Auto-Editor platform ABI: $abi',
+    ),
+  };
+}
+
+/// Returns the installed engine directory for each native bundle layout.
+String nativeAutoEditorInstallRoot({
+  required String resolvedExecutable,
+  String? operatingSystem,
+}) {
+  final os = operatingSystem ?? Platform.operatingSystem;
+  final paths = p.Context(
+    style: os == 'windows' ? p.Style.windows : p.Style.posix,
+  );
+  if (!paths.isAbsolute(resolvedExecutable)) {
+    throw ArgumentError.value(resolvedExecutable, 'resolvedExecutable');
+  }
+  final executableDirectory = paths.dirname(resolvedExecutable);
+  return switch (os) {
+    'macos' => paths.join(
+      paths.dirname(executableDirectory),
+      'Resources',
+      'engine',
+    ),
+    'windows' => paths.join(executableDirectory, 'engine'),
+    'linux' =>
+      paths.basename(executableDirectory) == 'bin' &&
+              paths.basename(paths.dirname(executableDirectory)) == 'usr'
+          ? paths.join(
+              paths.dirname(executableDirectory),
+              'lib',
+              'gapless',
+              'engine',
+            )
+          : paths.join(executableDirectory, 'lib', 'gapless', 'engine'),
+    final unsupported => throw UnsupportedError(
+      'Gapless engine bundle layout is unavailable on $unsupported.',
     ),
   };
 }
@@ -280,6 +334,19 @@ void _requireKeys(Map<String, dynamic> value, Set<String> keys, String name) {
   if (actual.length != keys.length ||
       actual.difference(keys).isNotEmpty ||
       keys.difference(actual).isNotEmpty) {
+    throw FormatException('Unexpected $name structure');
+  }
+}
+
+void _requireAllowedKeys(
+  Map<String, dynamic> value,
+  Set<String> required,
+  Set<String> optional,
+  String name,
+) {
+  final actual = value.keys.toSet();
+  if (required.difference(actual).isNotEmpty ||
+      actual.difference({...required, ...optional}).isNotEmpty) {
     throw FormatException('Unexpected $name structure');
   }
 }

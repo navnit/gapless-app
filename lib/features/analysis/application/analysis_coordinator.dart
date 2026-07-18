@@ -172,6 +172,21 @@ final class AnalysisCoordinator {
     });
   }
 
+  Future<void> cancel() {
+    _ensureActive();
+    _generation += 1;
+    _currentRequest = null;
+    _timer?.cancel();
+    _timer = null;
+    final previousBarrier = _cancellationBarrier;
+    final future = Future.wait<void>([
+      previousBarrier,
+      ..._runs.map((run) => run.cancel()),
+    ]).then((_) {});
+    _cancellationBarrier = future;
+    return future;
+  }
+
   Future<void> dispose() {
     final existing = _disposeFuture;
     if (existing != null) return existing;

@@ -13,6 +13,7 @@ import 'package:gapless/features/editor/presentation/editor_view_model.dart';
 import 'package:gapless/features/engine/data/auto_editor/auto_editor_adapter.dart';
 import 'package:gapless/features/engine/data/auto_editor/auto_editor_locator.dart';
 import 'package:gapless/features/engine/domain/engine_port.dart';
+import 'package:gapless/features/export/presentation/export_dialog.dart';
 import 'package:gapless/features/playback/application/edited_playback_controller.dart';
 import 'package:gapless/features/playback/data/media_kit_playback_adapter.dart';
 import 'package:gapless/features/playback/domain/playback_port.dart';
@@ -68,14 +69,17 @@ final class AppDependencies {
   const AppDependencies({
     required this.editorViewModelFactory,
     this.videoController,
+    this.exportDialogs,
   });
 
   const AppDependencies.empty()
     : editorViewModelFactory = null,
-      videoController = null;
+      videoController = null,
+      exportDialogs = null;
 
   final EditorViewModelFactory? editorViewModelFactory;
   final VideoController? videoController;
+  final AppExportDialogServices? exportDialogs;
 
   EditorViewModel createEditorViewModel() =>
       editorViewModelFactory?.call() ?? EditorViewModel.empty();
@@ -94,10 +98,8 @@ final class AppDependencies {
   }) async {
     final directories = await (loadDirectories ?? _loadAppDirectories)();
     final runner = processRunner ?? IoProcessRunner();
-    final engineDirectory = p.join(
-      directories.flutterAssets.path,
-      'assets',
-      'engine',
+    final engineDirectory = nativeAutoEditorInstallRoot(
+      resolvedExecutable: Platform.resolvedExecutable,
     );
     final resolvedEngine =
         engine ??
@@ -138,11 +140,8 @@ final class AppDependencies {
             p.join(directories.applicationSupport.path, 'recent-projects.json'),
           ),
         );
-    final resolvedExporter =
-        exporter ??
-        CallbackEditorExportPort((_) async {
-          throw UnsupportedError('The MP4 renderer is not composed yet.');
-        });
+    final exportHost = exporter == null ? AppExportDialogHost() : null;
+    final resolvedExporter = exporter ?? exportHost!;
     final projectsDirectory = Directory(
       p.join(directories.applicationSupport.path, 'projects'),
     );
@@ -176,8 +175,56 @@ final class AppDependencies {
         runtime: runtime,
       ),
       videoController: appPlayback.videoController,
+      exportDialogs: exportHost == null
+          ? null
+          : AppExportDialogServices(
+              host: exportHost,
+              engine: resolvedEngine,
+              destinationPicker: const FileSelectorExportDestinationPicker(),
+              revealInFolder: const NativeExportRevealInFolder(),
+            ),
     );
   }
+}
+
+final class AppExportDialogRequest {
+  AppExportDialogRequest(this.request) : _complete = Completer<void>();
+
+  final EditorExportRequest request;
+  final Completer<void> _complete;
+  Future<void> get completed => _complete.future;
+
+  void finish() {
+    if (!_complete.isCompleted) _complete.complete();
+  }
+}
+
+final class AppExportDialogHost implements EditorExportPort {
+  final StreamController<AppExportDialogRequest> _requests =
+      StreamController<AppExportDialogRequest>.broadcast(sync: true);
+
+  Stream<AppExportDialogRequest> get requests => _requests.stream;
+
+  @override
+  Future<void> request(EditorExportRequest request) async {
+    final dialog = AppExportDialogRequest(request);
+    _requests.add(dialog);
+    await dialog.completed;
+  }
+}
+
+final class AppExportDialogServices {
+  const AppExportDialogServices({
+    required this.host,
+    required this.engine,
+    required this.destinationPicker,
+    required this.revealInFolder,
+  });
+
+  final AppExportDialogHost host;
+  final EnginePort engine;
+  final ExportDestinationPicker destinationPicker;
+  final ExportRevealInFolder revealInFolder;
 }
 
 Future<AppDirectories> _loadAppDirectories() async => AppDirectories(
@@ -386,6 +433,56 @@ final class FileSelectorEditorFilePicker implements EditorFilePicker {
   }
 }
 
+final class FileSelectorExportDestinationPicker
+    implements ExportDestinationPicker {
+  const FileSelectorExportDestinationPicker();
+
+  static const _mp4Types = <XTypeGroup>[
+    XTypeGroup(
+      label: 'MP4 video',
+      extensions: <String>['mp4'],
+      mimeTypes: <String>['video/mp4'],
+      uniformTypeIdentifiers: <String>['public.mpeg-4'],
+    ),
+  ];
+
+  @override
+  Future<Uri?> chooseMp4Destination(Uri? suggested) async {
+    final location = await getSaveLocation(
+      acceptedTypeGroups: _mp4Types,
+      suggestedName: suggested == null
+          ? 'Gapless export.mp4'
+          : p.basename(suggested.toFilePath()),
+      initialDirectory: suggested == null
+          ? null
+          : p.dirname(suggested.toFilePath()),
+    );
+    return location == null ? null : Uri.file(location.path);
+  }
+}
+
+final class NativeExportRevealInFolder implements ExportRevealInFolder {
+  const NativeExportRevealInFolder();
+
+  @override
+  Future<void> reveal(Uri file) async {
+    final filePath = file.toFilePath();
+    final result = switch (Platform.operatingSystem) {
+      'macos' => await Process.run('open', <String>['-R', filePath]),
+      'windows' => await Process.run('explorer.exe', <String>[
+        '/select,$filePath',
+      ]),
+      'linux' => await Process.run('xdg-open', <String>[p.dirname(filePath)]),
+      final unsupported => throw UnsupportedError(
+        'Reveal in folder is unavailable on $unsupported.',
+      ),
+    };
+    if (result.exitCode != 0) {
+      throw FileSystemException('Could not reveal export', filePath);
+    }
+  }
+}
+
 final class JsonRecentProjectsStore implements RecentProjectsPort {
   const JsonRecentProjectsStore(this.file);
 
@@ -472,6 +569,9 @@ final class CoordinatedEditorAnalysis implements EditorAnalysisPort {
     _requestId = requestId;
     coordinator.request(document);
   }
+
+  @override
+  Future<void> cancel() => coordinator.cancel();
 
   @override
   void invalidate() {

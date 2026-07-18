@@ -1,0 +1,59 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            device: macos
+            build: macos
+          - os: windows-2025
+            device: windows
+            build: windows
+          - os: ubuntu-22.04
+            device: linux
+            build: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: 3.44.4
+          cache: true
+      - run: flutter pub get
+      - run: dart run tool/engine/fetch_engine.dart
+      - run: dart run tool/engine/fetch_engine.dart --verify-only
+      - run: dart format --output=none --set-exit-if-changed lib test integration_test tool
+      - run: flutter analyze
+      - run: flutter test
+      - run: dart run tool/release/generate_sbom.dart
+      - if: runner.os != 'Linux'
+        run: flutter build ${{ matrix.build }} --debug
+      - if: runner.os == 'Linux'
+        run: xvfb-run flutter build linux --debug
+      - if: runner.os != 'Linux'
+        run: flutter test integration_test/editor_workflow_test.dart -d ${{ matrix.device }}
+      - if: runner.os == 'Linux'
+        run: xvfb-run flutter test integration_test/editor_workflow_test.dart -d linux
+      - if: runner.os != 'Linux'
+        run: flutter test integration_test/recovery_workflow_test.dart -d ${{ matrix.device }}
+      - if: runner.os == 'Linux'
+        run: xvfb-run flutter test integration_test/recovery_workflow_test.dart -d linux
+      - run: git diff --check
+
+  workflow-safety:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Ensure PR workflow has no signing secrets
+        run: '! grep -R "secrets\." .github/workflows/verify.yml'

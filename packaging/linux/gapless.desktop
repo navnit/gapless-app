@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Gapless
+Comment=Remove inactive parts from local videos
+Exec=gapless
+Icon=gapless
+Categories=AudioVideo;Video;
+Terminal=false

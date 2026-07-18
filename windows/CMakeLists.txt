@@ -83,6 +83,25 @@ install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
 install(TARGETS gapless_process_host RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
+set(GAPLESS_ENGINE_SOURCE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../assets/engine/windows-x64/auto-editor.exe")
+if(NOT EXISTS "${GAPLESS_ENGINE_SOURCE}")
+  message(FATAL_ERROR
+    "Missing verified Auto-Editor binary. Run: dart run tool/engine/fetch_engine.dart")
+endif()
+install(FILES "${GAPLESS_ENGINE_SOURCE}"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/engine" COMPONENT Runtime)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/engine/manifest.json"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/engine" COMPONENT Runtime)
+install(FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/THIRD_PARTY_NOTICES.md"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/SOURCE_OFFER.md"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/compliance" COMPONENT Runtime)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../build/release/sbom.spdx.json")
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../build/release/sbom.spdx.json"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/compliance" COMPONENT Runtime)
+endif()
+
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)
 

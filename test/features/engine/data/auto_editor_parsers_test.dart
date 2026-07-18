@@ -18,6 +18,19 @@ void main() {
     expect(metadata.audioLayout, 'stereo');
   });
 
+  test('accepts a finite zero audio duration when media duration is valid', () {
+    final output = _fixtureText('info.json').replaceFirst(
+      '"samplerate": 48000,\n        "duration": 42.4',
+      '"samplerate": 48000,\n        "duration": 0.0',
+    );
+
+    final metadata = AutoEditorParsers.parseInfoJson(output);
+
+    expect(metadata.durationUs, 42_400_000);
+    expect(metadata.hasAudio, isTrue);
+    expect(metadata.sampleRate, 48_000);
+  });
+
   test('parses levels after @start into unsigned 16-bit samples', () {
     final levels = AutoEditorParsers.parseLevels(
       '\n@start\n0.0\n0.5\n1.0\n',

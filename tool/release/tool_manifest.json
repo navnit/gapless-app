@@ -1,0 +1,12 @@
+{
+  "innoSetup": {
+    "version": "6.7.3",
+    "url": "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe",
+    "sha256": "9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732"
+  },
+  "appimagetool": {
+    "version": "continuous-8c8c91f762b412a19f4e8d2c4b35afb98f2d7c81",
+    "url": "https://api.github.com/repos/AppImage/appimagetool/releases/assets/324406882",
+    "sha256": "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0"
+  }
+}

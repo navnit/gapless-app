@@ -30,6 +30,7 @@ abstract interface class EditorAnalysisPort {
   Stream<EditorAnalysisUpdate> get updates;
   AnalysisState get state;
   void request(ProjectDocument document, {required int requestId});
+  Future<void> cancel();
   void invalidate();
   Future<void> dispose();
 }
@@ -243,6 +244,7 @@ final class EditorViewModel extends ChangeNotifier {
   Future<void> _playbackTail = Future<void>.value();
   EngineTask<MediaMetadata>? _probeTask;
   _AnalysisRequestIdentity? _analysisRequest;
+  EditorState? _analysisRecoveryState;
   var _analysisRequestSequence = 0;
   var _operationGeneration = 0;
   var _pickerAttempt = 0;
@@ -499,6 +501,54 @@ final class EditorViewModel extends ChangeNotifier {
 
   Future<void> retrySave() => save();
 
+  Future<void> relocateSource() async {
+    final runtime = this.runtime;
+    final project = _state.project;
+    final projectUri = _state.projectUri;
+    if (runtime == null || project == null || projectUri == null) return;
+    final generation = _operationGeneration;
+    final selected = await runtime.picker.pickVideo();
+    if (selected == null || !_isOperationCurrent(generation)) return;
+    try {
+      final fingerprint = await runtime.fingerprinter.fingerprint(selected);
+      if (!project.source.fingerprint.matches(fingerprint)) {
+        _setState(
+          _state.copyWith(
+            message: 'That video has changed and does not match this project.',
+          ),
+        );
+        return;
+      }
+      final selectedPath = selected.toFilePath();
+      final relocated = _copyProject(
+        project,
+        sourceReference: SourceReference(
+          relativePath: p.relative(
+            selectedPath,
+            from: p.dirname(projectUri.toFilePath()),
+          ),
+          absolutePath: selectedPath,
+          fingerprint: fingerprint,
+        ),
+      );
+      _setState(
+        _state.copyWith(
+          project: relocated,
+          message: 'Saving relocated source…',
+        ),
+      );
+      await _save(relocated, generation: generation);
+      if (_state.saveStatus == EditorSaveStatus.saved &&
+          _isOperationCurrent(generation)) {
+        await openProject(projectUri);
+      }
+    } on Object catch (error) {
+      if (_isOperationCurrent(generation)) {
+        _setState(_state.copyWith(message: error.toString()));
+      }
+    }
+  }
+
   Future<void> saveAs() async {
     final runtime = this.runtime;
     final project = _state.project;
@@ -708,10 +758,31 @@ final class EditorViewModel extends ChangeNotifier {
 
   Future<void> useMotion() => setAnalysisMethod(AnalysisMethod.motion);
 
+  Future<void> cancelAnalysis() async {
+    final runtime = this.runtime;
+    final recovery = _analysisRecoveryState;
+    if (runtime == null || recovery == null || _analysisRequest == null) return;
+    _analysisRequest = null;
+    _analysisRecoveryState = null;
+    runtime.analysis.invalidate();
+    await runtime.analysis.cancel();
+    if (_disposed) return;
+    _setState(recovery.copyWith(message: 'Analysis cancelled.'));
+    final project = recovery.project;
+    if (project != null) {
+      await _save(project, generation: _operationGeneration);
+    }
+    final timeline = recovery.timeline;
+    if (timeline != null) await runtime.onTimelineChanged?.call(timeline);
+  }
+
   Future<void> _changeDetectionSettings(AnalysisSettings settings) async {
     final project = _state.project;
     final metadata = _state.metadata;
     if (project == null || metadata == null) return;
+    if (_state.phase == EditorPhase.ready) {
+      _analysisRecoveryState = _state;
+    }
     final updated = _copyProject(
       project,
       settings: settings,
@@ -970,6 +1041,7 @@ final class EditorViewModel extends ChangeNotifier {
   int _beginOpenOperation() {
     final generation = ++_operationGeneration;
     _analysisRequest = null;
+    _analysisRecoveryState = null;
     runtime?.analysis.invalidate();
     final previousAutosave = _autosave;
     _autosave = null;
@@ -1107,6 +1179,7 @@ final class EditorViewModel extends ChangeNotifier {
           ),
         );
       case AnalysisReady(:final timeline, :final levels):
+        _analysisRecoveryState = null;
         final project = _state.project;
         if (project == null) return;
         final detected = timeline.segments
@@ -1167,6 +1240,7 @@ final class EditorViewModel extends ChangeNotifier {
     _operationGeneration += 1;
     _pickerAttempt += 1;
     _analysisRequest = null;
+    _analysisRecoveryState = null;
     runtime?.analysis.invalidate();
     final probe = _probeTask;
     _probeTask = null;

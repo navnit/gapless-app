@@ -301,6 +301,28 @@ void main() {
   );
 
   test(
+    'cancel stops scheduled and in-flight work without late publication',
+    () async {
+      final states = <AnalysisState>[];
+      final subscription = coordinator.states.listen(states.add);
+      coordinator.request(_project());
+      clock.elapse(const Duration(milliseconds: 250));
+      await _pump();
+      final task = engine.levelTasks.single;
+
+      await coordinator.cancel();
+      expect(task.cancelCount, 1);
+      final stateCount = states.length;
+
+      task.complete(_levels());
+      await _pump();
+      expect(states, hasLength(stateCount));
+      expect(engine.detectCalls, isEmpty);
+      await subscription.cancel();
+    },
+  );
+
+  test(
     'dispose cancels in-flight work once and suppresses late publication',
     () async {
       final states = <AnalysisState>[];

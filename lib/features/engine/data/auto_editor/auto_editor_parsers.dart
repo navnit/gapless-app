@@ -38,7 +38,7 @@ abstract final class AutoEditorParsers {
         ? null
         : _map(audio.single, 'audio stream');
     if (audioStream != null) {
-      _finitePositiveNumber(audioStream['duration'], 'audio.duration');
+      _finiteNonNegativeNumber(audioStream['duration'], 'audio.duration');
     }
     final container = _map(media['container'], 'container');
     final durationSeconds = _finitePositiveNumber(
@@ -142,6 +142,13 @@ int _positiveInt(Object? value, String name) {
 double _finitePositiveNumber(Object? value, String name) {
   if (value is! num || !value.isFinite || value <= 0) {
     throw FormatException('Expected positive finite number $name');
+  }
+  return value.toDouble();
+}
+
+double _finiteNonNegativeNumber(Object? value, String name) {
+  if (value is! num || !value.isFinite || value < 0) {
+    throw FormatException('Expected non-negative finite number $name');
   }
   return value.toDouble();
 }

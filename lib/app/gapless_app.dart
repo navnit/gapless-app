@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:gapless/app/app_dependencies.dart';
 import 'package:gapless/features/editor/presentation/editor_screen.dart';
 import 'package:gapless/features/editor/presentation/editor_view_model.dart';
+import 'package:gapless/features/export/application/export_coordinator.dart';
+import 'package:gapless/features/export/presentation/export_dialog.dart';
 
 final class GaplessApp extends StatefulWidget {
   const GaplessApp({required this.dependencies, super.key});
@@ -15,11 +19,49 @@ final class GaplessApp extends StatefulWidget {
 final class _GaplessAppState extends State<GaplessApp> {
   late final EditorViewModel _editor = widget.dependencies
       .createEditorViewModel();
+  StreamSubscription<AppExportDialogRequest>? _exportRequests;
+
+  @override
+  void initState() {
+    super.initState();
+    final services = widget.dependencies.exportDialogs;
+    if (services != null) {
+      _exportRequests = services.host.requests.listen(
+        (request) => unawaited(_showExportDialog(services, request)),
+      );
+    }
+  }
 
   @override
   void dispose() {
+    unawaited(_exportRequests?.cancel());
     _editor.dispose();
     super.dispose();
+  }
+
+  Future<void> _showExportDialog(
+    AppExportDialogServices services,
+    AppExportDialogRequest pending,
+  ) async {
+    final coordinator = ExportCoordinator(engine: services.engine);
+    try {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => ExportDialog(
+          coordinator: coordinator,
+          source: pending.request.source,
+          metadata: pending.request.metadata,
+          timeline: pending.request.timeline,
+          destinationPicker: services.destinationPicker,
+          revealInFolder: services.revealInFolder,
+        ),
+      );
+    } finally {
+      await coordinator.dispose();
+      pending.finish();
+    }
   }
 
   @override

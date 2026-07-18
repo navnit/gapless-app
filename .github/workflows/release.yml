@@ -1,0 +1,207 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            os: macos-14
+            platform: macos
+          - target: macos-x64
+            os: macos-15-intel
+            platform: macos
+          - target: windows-x64
+            os: windows-2025
+            platform: windows
+          - target: linux-x64
+            os: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: 3.44.4
+          cache: true
+      - run: flutter pub get
+      - run: dart run tool/engine/fetch_engine.dart
+      - run: dart run tool/engine/fetch_engine.dart --verify-only
+      - run: flutter analyze
+      - run: flutter test
+      - run: dart run tool/release/generate_sbom.dart
+      - run: dart run tool/testing/generate_fixture_video.dart build/smoke/source.avi
+      - if: matrix.platform == 'macos'
+        run: flutter build macos --release
+      - if: matrix.platform == 'windows'
+        run: flutter build windows --release
+      - if: matrix.platform == 'linux'
+        run: flutter build linux --release
+      - if: matrix.platform == 'macos'
+        run: dart run tool/release/generate_sbom.dart --bundle build/macos/Build/Products/Release/Gapless.app --output build/macos/Build/Products/Release/Gapless.app/Contents/Resources/compliance/sbom.spdx.json
+      - if: matrix.platform == 'windows'
+        run: dart run tool/release/generate_sbom.dart --bundle build/windows/x64/runner/Release --output build/windows/x64/runner/Release/compliance/sbom.spdx.json
+      - if: matrix.platform == 'linux'
+        run: dart run tool/release/generate_sbom.dart --bundle build/linux/x64/release/bundle --output build/linux/x64/release/bundle/lib/gapless/compliance/sbom.spdx.json
+      - name: Import Apple signing and notarization credentials
+        if: matrix.platform == 'macos'
+        env:
+          P12_BASE64: ${{ secrets.MACOS_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          NOTARY_KEY_BASE64: ${{ secrets.MACOS_NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+        run: |
+          test -n "$P12_BASE64" && test -n "$NOTARY_KEY_BASE64"
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/gapless.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/gapless.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/gapless.keychain-db"
+          security import "$RUNNER_TEMP/signing.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$RUNNER_TEMP/gapless.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/gapless.keychain-db" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/gapless.keychain-db"
+          echo "$NOTARY_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool store-credentials GaplessNotary --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER"
+      - name: Sign Windows nested binaries and stamp installed checksum
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_PFX_BASE64) { throw 'WINDOWS_PFX_BASE64 is required' }
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\gapless.pfx", [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64))
+          $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Filter signtool.exe -Recurse | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          $bundle = 'build\windows\x64\runner\Release'
+          foreach ($file in @("$bundle\engine\auto-editor.exe", "$bundle\gapless_process_host.exe", "$bundle\gapless.exe")) {
+            & $signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f "$env:RUNNER_TEMP\gapless.pfx" /p $env:WINDOWS_PFX_PASSWORD $file
+            if ($LASTEXITCODE -ne 0) { throw "Signing failed: $file" }
+          }
+          dart run tool/release/stamp_installed_engine.dart --bundle $bundle --target windows-x64
+      - if: matrix.platform == 'macos'
+        run: dart run tool/release/verify_bundle.dart --bundle build/macos/Build/Products/Release/Gapless.app --target ${{ matrix.target }}
+      - if: matrix.platform == 'windows'
+        run: dart run tool/release/verify_bundle.dart --bundle build/windows/x64/runner/Release --target ${{ matrix.target }}
+      - if: matrix.platform == 'linux'
+        run: dart run tool/release/verify_bundle.dart --bundle build/linux/x64/release/bundle --target ${{ matrix.target }}
+      - if: matrix.platform == 'macos'
+        env:
+          GAPLESS_MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          GAPLESS_NOTARY_PROFILE: GaplessNotary
+        run: packaging/macos/package_dmg.sh build/macos/Build/Products/Release/Gapless.app build/Gapless-${{ matrix.target }}.dmg
+      - if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          $manifest = Get-Content tool/release/tool_manifest.json | ConvertFrom-Json
+          Invoke-WebRequest $manifest.innoSetup.url -OutFile $env:RUNNER_TEMP\inno.exe
+          if ((Get-FileHash $env:RUNNER_TEMP\inno.exe -Algorithm SHA256).Hash.ToLower() -ne $manifest.innoSetup.sha256) { throw 'Inno Setup checksum mismatch' }
+          Start-Process $env:RUNNER_TEMP\inno.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          $env:GAPLESS_VERSION = '${{ github.ref_name }}'.TrimStart('v')
+          $env:GAPLESS_WINDOWS_BUNDLE = (Resolve-Path build/windows/x64/runner/Release)
+          $env:GAPLESS_OUTPUT_DIR = (Resolve-Path build)
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe is missing: $iscc" }
+          & $iscc packaging/windows/gapless.iss
+          $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Filter signtool.exe -Recurse | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          Get-ChildItem build\Gapless-*-windows-x64.exe | ForEach-Object {
+            & $signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f "$env:RUNNER_TEMP\gapless.pfx" /p $env:WINDOWS_PFX_PASSWORD $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Installer signing failed" }
+          }
+      - if: matrix.platform == 'linux'
+        run: |
+          url=$(sed -n '/"appimagetool"/,/}/{s/.*"url": "\([^"]*\)".*/\1/p;}' tool/release/tool_manifest.json)
+          curl -fL -H 'Accept: application/octet-stream' "$url" -o "$RUNNER_TEMP/appimagetool"
+          chmod 755 "$RUNNER_TEMP/appimagetool"
+          packaging/linux/package_appimage.sh build/linux/x64/release/bundle "$RUNNER_TEMP/appimagetool" build/Gapless-linux-x64.AppImage
+      - name: Smoke test installed macOS DMG
+        if: matrix.platform == 'macos'
+        run: |
+          mount="$RUNNER_TEMP/gapless-mounted"
+          mkdir -p "$mount"
+          hdiutil attach "build/Gapless-${{ matrix.target }}.dmg" -nobrowse -mountpoint "$mount"
+          trap 'hdiutil detach "$mount"' EXIT
+          "$mount/Gapless.app/Contents/MacOS/Gapless" --smoke-test "$GITHUB_WORKSPACE/build/smoke/source.avi" "$RUNNER_TEMP/installed-output.mp4"
+          dart run tool/release/verify_bundle.dart --bundle "$mount/Gapless.app" --target ${{ matrix.target }}
+      - name: Smoke test installed Windows package
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem build\Gapless-*-windows-x64.exe | Select-Object -First 1).FullName
+          $install = "$env:RUNNER_TEMP\GaplessInstalled"
+          Start-Process $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$install" -Wait
+          & "$install\gapless.exe" --smoke-test "$env:GITHUB_WORKSPACE\build\smoke\source.avi" "$env:RUNNER_TEMP\installed-output.mp4"
+          if ($LASTEXITCODE -ne 0) { throw 'Installed smoke test failed' }
+          dart run tool/release/verify_bundle.dart --bundle $install --target windows-x64
+      - name: Smoke test installed Linux AppImage
+        if: matrix.platform == 'linux'
+        run: |
+          chmod 755 build/Gapless-linux-x64.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 build/Gapless-linux-x64.AppImage --smoke-test "$GITHUB_WORKSPACE/build/smoke/source.avi" "$RUNNER_TEMP/installed-output.mp4"
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/build/Gapless-linux-x64.AppImage" --appimage-extract >/dev/null
+          cd "$GITHUB_WORKSPACE"
+          dart run tool/release/verify_bundle.dart --bundle "$RUNNER_TEMP/squashfs-root/usr" --target linux-x64
+      - if: matrix.platform == 'macos'
+        run: flutter test integration_test/editor_workflow_test.dart -d macos
+      - if: matrix.platform == 'windows'
+        run: flutter test integration_test/editor_workflow_test.dart -d windows
+      - if: matrix.platform == 'linux'
+        run: xvfb-run flutter test integration_test/editor_workflow_test.dart -d linux
+      - if: matrix.platform == 'macos'
+        run: flutter test integration_test/recovery_workflow_test.dart -d macos
+      - if: matrix.platform == 'windows'
+        run: flutter test integration_test/recovery_workflow_test.dart -d windows
+      - if: matrix.platform == 'linux'
+        run: xvfb-run flutter test integration_test/recovery_workflow_test.dart -d linux
+      - name: Checksums and source material
+        shell: bash
+        run: |
+          cd build
+          find . -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' \) -print0 | sort -z | xargs -0 shasum -a 256 > SHA256SUMS-${{ matrix.target }}
+          cp ../docs/building.md .
+          cp ../third_party/THIRD_PARTY_NOTICES.md .
+          if [ "${{ matrix.platform }}" = macos ]; then
+            cp macos/Build/Products/Release/Gapless.app/Contents/Resources/compliance/sbom.spdx.json sbom-${{ matrix.target }}.spdx.json
+          elif [ "${{ matrix.platform }}" = windows ]; then
+            cp windows/x64/runner/Release/compliance/sbom.spdx.json sbom-${{ matrix.target }}.spdx.json
+          else
+            cp linux/x64/release/bundle/lib/gapless/compliance/sbom.spdx.json sbom-${{ matrix.target }}.spdx.json
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            build/*.dmg
+            build/*.exe
+            build/*.AppImage
+            build/SHA256SUMS-*
+            build/building.md
+            build/THIRD_PARTY_NOTICES.md
+            build/sbom-*.spdx.json
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Consolidate checksums
+        run: |
+          cat artifacts/SHA256SUMS-* | sort -k 2 > artifacts/SHA256SUMS
+          rm artifacts/SHA256SUMS-*
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          files: artifacts/*

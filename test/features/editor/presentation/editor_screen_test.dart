@@ -175,6 +175,54 @@ void main() {
     },
   );
 
+  test(
+    'cancelling settings analysis restores and persists the ready edit',
+    () async {
+      final initial = _readyStateWithManualOverride();
+      final analysis = _FakeAnalysis();
+      final store = _MemoryProjectStore();
+      final viewModel = EditorViewModel(
+        initialState: initial,
+        runtime: _runtime(analysis: analysis, store: store),
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.setThresholdDb(-18);
+      await viewModel.cancelAnalysis();
+
+      expect(analysis.cancelCount, 1);
+      expect(viewModel.state.phase, EditorPhase.ready);
+      expect(viewModel.state.project, initial.project);
+      expect(viewModel.state.timeline, initial.timeline);
+      expect(viewModel.state.message, 'Analysis cancelled.');
+      expect(store.savedDocuments.last, initial.project);
+    },
+  );
+
+  testWidgets('offers cancellation while re-analyzing an existing edit', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 832));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final analysis = _FakeAnalysis();
+    final viewModel = EditorViewModel(
+      initialState: _readyStateWithManualOverride(),
+      runtime: _runtime(analysis: analysis, store: _MemoryProjectStore()),
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.setThresholdDb(-18);
+
+    await tester.pumpWidget(
+      MaterialApp(home: EditorScreen(viewModel: viewModel)),
+    );
+    expect(find.text('Cancel analysis'), findsOneWidget);
+    await tester.tap(find.text('Cancel analysis'));
+    await tester.pump();
+
+    expect(viewModel.state.phase, EditorPhase.ready);
+    expect(analysis.cancelCount, 1);
+  });
+
   testWidgets('explains when detection settings clear manual choices', (
     tester,
   ) async {
@@ -1176,6 +1224,7 @@ final class _FakeAnalysis implements EditorAnalysisPort {
   final requests = <ProjectDocument>[];
   final _requestIds = <ProjectDocument, int>{};
   final _updates = StreamController<EditorAnalysisUpdate>.broadcast(sync: true);
+  var cancelCount = 0;
 
   @override
   AnalysisState get state => const AnalysisIdle();
@@ -1191,6 +1240,11 @@ final class _FakeAnalysis implements EditorAnalysisPort {
 
   @override
   void invalidate() {}
+
+  @override
+  Future<void> cancel() async {
+    cancelCount += 1;
+  }
 
   void emitFor(ProjectDocument document, AnalysisState state) {
     _updates.add(

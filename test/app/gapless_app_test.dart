@@ -78,6 +78,8 @@ void main() {
         isA<ProjectRepositorySourceResolver>(),
       );
       expect(editor.runtime!.playback, same(playback));
+      expect(dependencies.exportDialogs, isNotNull);
+      expect(editor.runtime!.exporter, same(dependencies.exportDialogs!.host));
       expect(dependencies.videoController, isNull);
       expect(processRunner.startCalls, 0);
 

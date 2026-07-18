@@ -8,6 +8,40 @@ import 'package:gapless/core/process/process_runner.dart';
 import 'package:gapless/features/engine/data/auto_editor/auto_editor_locator.dart';
 
 void main() {
+  group('nativeAutoEditorInstallRoot', () {
+    test('uses deterministic native bundle layouts', () {
+      expect(
+        nativeAutoEditorInstallRoot(
+          resolvedExecutable:
+              '/Applications/Gapless.app/Contents/MacOS/gapless',
+          operatingSystem: 'macos',
+        ),
+        '/Applications/Gapless.app/Contents/Resources/engine',
+      );
+      expect(
+        nativeAutoEditorInstallRoot(
+          resolvedExecutable: r'C:\Program Files\Gapless\gapless.exe',
+          operatingSystem: 'windows',
+        ),
+        r'C:\Program Files\Gapless\engine',
+      );
+      expect(
+        nativeAutoEditorInstallRoot(
+          resolvedExecutable: '/opt/Gapless/usr/bin/gapless',
+          operatingSystem: 'linux',
+        ),
+        '/opt/Gapless/usr/lib/gapless/engine',
+      );
+      expect(
+        nativeAutoEditorInstallRoot(
+          resolvedExecutable: '/tmp/flutter-bundle/gapless',
+          operatingSystem: 'linux',
+        ),
+        '/tmp/flutter-bundle/lib/gapless/engine',
+      );
+    });
+  });
+
   test('parses the exact pinned manifest and four approved targets', () {
     final manifest = AutoEditorManifest.parse(
       File('assets/engine/manifest.json').readAsStringSync(),
@@ -107,6 +141,20 @@ void main() {
       expect(runner.requests.single.executable, executable.path);
       expect(runner.requests.single.arguments, ['--version']);
     });
+
+    test(
+      'accepts the deterministic direct path used by native bundles',
+      () async {
+        final executable = File('${temp.path}/auto-editor.exe')
+          ..writeAsStringSync('pinned bundle bytes');
+        final digest = sha256.convert(executable.readAsBytesSync()).toString();
+
+        final result = await locator.verifyTarget(_target(sha256: digest));
+
+        expect(result, executable.path);
+        expect(runner.requests.single.executable, executable.path);
+      },
+    );
 
     test('maps missing and checksum mismatches structurally', () async {
       await expectLater(
