@@ -1,0 +1,147 @@
+name: macOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Gapless version from pubspec.yaml
+        required: true
+        default: '0.1.0'
+        type: string
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            os: macos-14
+          - target: macos-x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: 3.44.4
+          cache: true
+      - name: Resolve and validate release version
+        id: version
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            release_version='${{ inputs.version }}'
+          else
+            release_version=${GITHUB_REF_NAME#v}
+          fi
+          dart run tool/release/validate_release_version.dart --release-version "$release_version"
+          echo "value=$release_version" >> "$GITHUB_OUTPUT"
+      - name: Validate signing and notarization secrets
+        env:
+          P12_BASE64: ${{ secrets.MACOS_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          NOTARY_KEY_BASE64: ${{ secrets.MACOS_NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          test -n "$P12_BASE64" || { echo '::error::MACOS_P12_BASE64 is required'; exit 1; }
+          test -n "$P12_PASSWORD" || { echo '::error::MACOS_P12_PASSWORD is required'; exit 1; }
+          test -n "$KEYCHAIN_PASSWORD" || { echo '::error::MACOS_KEYCHAIN_PASSWORD is required'; exit 1; }
+          test -n "$NOTARY_KEY_BASE64" || { echo '::error::MACOS_NOTARY_KEY_BASE64 is required'; exit 1; }
+          test -n "$NOTARY_KEY_ID" || { echo '::error::MACOS_NOTARY_KEY_ID is required'; exit 1; }
+          test -n "$NOTARY_ISSUER" || { echo '::error::MACOS_NOTARY_ISSUER is required'; exit 1; }
+          test -n "$SIGN_IDENTITY" || { echo '::error::MACOS_SIGN_IDENTITY is required'; exit 1; }
+      - run: flutter pub get
+      - run: dart run tool/engine/fetch_engine.dart
+      - run: dart run tool/engine/fetch_engine.dart --verify-only
+      - run: flutter analyze
+      - run: flutter test
+      - run: dart run tool/release/generate_sbom.dart
+      - run: dart run tool/testing/generate_fixture_video.dart build/smoke/source.avi
+      - run: flutter build macos --release
+      - run: dart run tool/release/generate_sbom.dart --bundle build/macos/Build/Products/Release/Gapless.app --output build/macos/Build/Products/Release/Gapless.app/Contents/Resources/compliance/sbom.spdx.json
+      - name: Import Apple signing and notarization credentials
+        env:
+          P12_BASE64: ${{ secrets.MACOS_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          NOTARY_KEY_BASE64: ${{ secrets.MACOS_NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+        run: |
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/gapless.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/gapless.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/gapless.keychain-db"
+          security import "$RUNNER_TEMP/signing.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$RUNNER_TEMP/gapless.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/gapless.keychain-db" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/gapless.keychain-db"
+          echo "$NOTARY_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool store-credentials GaplessNotary --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER"
+      - name: Sign, notarize, and package DMG
+        env:
+          GAPLESS_MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          GAPLESS_NOTARY_PROFILE: GaplessNotary
+        run: packaging/macos/package_dmg.sh build/macos/Build/Products/Release/Gapless.app "build/Gapless-${{ steps.version.outputs.value }}-${{ matrix.target }}.dmg"
+      - name: Smoke test installed macOS DMG
+        run: |
+          dmg="build/Gapless-${{ steps.version.outputs.value }}-${{ matrix.target }}.dmg"
+          mount="$RUNNER_TEMP/gapless-mounted"
+          mkdir -p "$mount"
+          hdiutil attach "$dmg" -nobrowse -mountpoint "$mount"
+          trap 'hdiutil detach "$mount"' EXIT
+          spctl --assess --type execute --verbose=4 "$mount/Gapless.app"
+          "$mount/Gapless.app/Contents/MacOS/Gapless" --smoke-test "$GITHUB_WORKSPACE/build/smoke/source.avi" "$RUNNER_TEMP/installed-output.mp4"
+          dart run tool/release/verify_bundle.dart --bundle "$mount/Gapless.app" --target ${{ matrix.target }}
+      - run: flutter test integration_test/editor_workflow_test.dart -d macos
+      - run: flutter test integration_test/recovery_workflow_test.dart -d macos
+      - name: Checksums and source material
+        run: |
+          cd build
+          shasum -a 256 "Gapless-${{ steps.version.outputs.value }}-${{ matrix.target }}.dmg" > "SHA256SUMS-${{ matrix.target }}"
+          cp ../docs/building.md .
+          cp ../third_party/THIRD_PARTY_NOTICES.md .
+          cp macos/Build/Products/Release/Gapless.app/Contents/Resources/compliance/sbom.spdx.json "sbom-${{ matrix.target }}.spdx.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-${{ steps.version.outputs.value }}-${{ matrix.target }}
+          path: |
+            build/Gapless-${{ steps.version.outputs.value }}-${{ matrix.target }}.dmg
+            build/SHA256SUMS-${{ matrix.target }}
+            build/building.md
+            build/THIRD_PARTY_NOTICES.md
+            build/sbom-${{ matrix.target }}.spdx.json
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    environment:
+      name: macos-release
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: artifacts
+          pattern: macos-*
+          merge-multiple: true
+      - name: Consolidate checksums
+        run: |
+          cat artifacts/SHA256SUMS-* | sort -k 2 > artifacts/SHA256SUMS
+          rm artifacts/SHA256SUMS-*
+      - name: Publish public GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Gapless ${{ github.ref_name }}
+          generate_release_notes: true
+          files: artifacts/*
