@@ -276,6 +276,8 @@ void main() {
 
     expect(verifyWorkflow, contains('- os: ubuntu-24.04'));
     expect(releaseWorkflow, contains('os: ubuntu-24.04'));
+    expect(verifyWorkflow, contains('sudo apt-get install -y libgtk-3-dev'));
+    expect(releaseWorkflow, contains('sudo apt-get install -y libgtk-3-dev'));
     expect(readme, contains('Ubuntu 24.04/glibc 2.39 baseline'));
   });
 
