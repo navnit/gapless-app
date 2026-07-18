@@ -160,8 +160,36 @@ void main() {
     );
 
     expect(await running.exitCode, 0);
-    expect(await File(resultPath).readAsString(), 'invalid');
+    expect(await File(resultPath).readAsString(), 'attempted');
   });
+
+  _windowsHostTest(
+    'detects intentional unrelated handle inheritance',
+    () async {
+      final resultPath = p.join(temp.path, 'intentional-handle-leak.txt');
+      final running = await runner.start(
+        ProcessRequest(
+          executable: _dartExecutable,
+          arguments: [
+            _fixturePath('process_fixture.dart'),
+            'check-unrelated-handle',
+            resultPath,
+          ],
+          environment: const {
+            'GPH_TEST_CREATE_UNRELATED_HANDLE': '1',
+            'GPH_TEST_INCLUDE_UNRELATED_HANDLE': '1',
+          },
+        ),
+      );
+
+      expect(await running.exitCode, isNot(0));
+      expect(await File(resultPath).readAsString(), 'attempted');
+      expect(
+        running.stderrDiagnostics.join('\n'),
+        contains('unrelated inheritable handle leaked'),
+      );
+    },
+  );
 
   _nativeHostTest(
     'exposes a nonzero exit code without losing output',

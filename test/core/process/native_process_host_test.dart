@@ -198,6 +198,8 @@ void main() {
     expect(source, contains('null_input.Get()'));
     expect(source, contains('child_output.Get()'));
     expect(source, contains('child_error.Get()'));
+    expect(source, contains('GPH_TEST_INCLUDE_UNRELATED_HANDLE'));
+    expect(source, contains('unrelated inheritable handle leaked'));
   });
 
   test('Windows timeout parsing and deadlines reject unsafe arithmetic', () {
@@ -262,6 +264,11 @@ void main() {
     expect(workflow, contains('windows-latest'));
     expect(workflow, contains('flutter-version: 3.44.4'));
     expect(workflow, contains('flutter test test/core/process'));
+    expect(workflow, contains('dart run tool/engine/fetch_engine.dart'));
+    expect(
+      workflow,
+      contains('dart run tool/engine/fetch_engine.dart --verify-only'),
+    );
     expect(workflow, contains('flutter build windows --debug'));
     expect(
       workflow,
@@ -276,8 +283,14 @@ void main() {
 
     expect(verifyWorkflow, contains('- os: ubuntu-24.04'));
     expect(releaseWorkflow, contains('os: ubuntu-24.04'));
-    expect(verifyWorkflow, contains('sudo apt-get install -y libgtk-3-dev'));
-    expect(releaseWorkflow, contains('sudo apt-get install -y libgtk-3-dev'));
+    expect(
+      verifyWorkflow,
+      contains('sudo apt-get install -y libgtk-3-dev libmpv-dev mpv'),
+    );
+    expect(
+      releaseWorkflow,
+      contains('sudo apt-get install -y libgtk-3-dev libmpv-dev mpv'),
+    );
     expect(readme, contains('Ubuntu 24.04/glibc 2.39 baseline'));
   });
 

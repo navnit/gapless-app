@@ -28,16 +28,11 @@ Future<void> main(List<String> arguments) async {
       if (rawHandle == null) {
         throw StateError('Native host did not publish its test handle');
       }
-      final waitForSingleObject = DynamicLibrary.open('kernel32.dll')
-          .lookupFunction<
-            Uint32 Function(IntPtr, Uint32),
-            int Function(int, int)
-          >('WaitForSingleObject');
-      final waitResult = waitForSingleObject(int.parse(rawHandle), 0);
-      File(arguments[1]).writeAsStringSync(
-        waitResult == 0xFFFFFFFF ? 'invalid' : 'inherited',
-        flush: true,
-      );
+      final setEvent = DynamicLibrary.open(
+        'kernel32.dll',
+      ).lookupFunction<Int32 Function(IntPtr), int Function(int)>('SetEvent');
+      setEvent(int.parse(rawHandle));
+      File(arguments[1]).writeAsStringSync('attempted', flush: true);
     case 'fail':
       stdout.writeln('before failure');
       stderr.writeln('structured diagnostic');

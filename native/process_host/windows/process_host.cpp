@@ -432,6 +432,8 @@ int wmain(int argc, wchar_t* argv[]) {
 #if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
   UniqueHandle unrelated_inheritable(CreateEventW(&security, TRUE, FALSE,
                                                    nullptr));
+  bool verify_unrelated_handle = false;
+  bool include_unrelated_handle = false;
   if (GetEnvironmentVariableW(L"GPH_TEST_CREATE_UNRELATED_HANDLE", nullptr,
                               0) != 0) {
     if (!unrelated_inheritable.IsValid()) {
@@ -448,6 +450,10 @@ int wmain(int argc, wchar_t* argv[]) {
       return ReportWindowsError(L"test handle publication",
                                 kHostFailureExitCode);
     }
+    verify_unrelated_handle = true;
+    include_unrelated_handle =
+        GetEnvironmentVariableW(L"GPH_TEST_INCLUDE_UNRELATED_HANDLE", nullptr,
+                                0) != 0;
   }
 #endif
 
@@ -469,9 +475,21 @@ int wmain(int argc, wchar_t* argv[]) {
     return ReportWindowsError(L"job attribute setup", kHostFailureExitCode);
   }
   HANDLE inherited_handles[] = {
-      null_input.Get(), child_output.Get(), child_error.Get()};
+      null_input.Get(),
+      child_output.Get(),
+      child_error.Get(),
+#if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
+      unrelated_inheritable.Get(),
+#endif
+  };
+  SIZE_T inherited_handle_bytes = 3 * sizeof(HANDLE);
+#if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
+  if (include_unrelated_handle) {
+    inherited_handle_bytes = sizeof(inherited_handles);
+  }
+#endif
   if (!attributes.Update(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited_handles,
-                         sizeof(inherited_handles))) {
+                         inherited_handle_bytes)) {
     return ReportWindowsError(L"handle attribute setup", kHostFailureExitCode);
   }
   startup.lpAttributeList = attributes.Get();
@@ -518,6 +536,22 @@ int wmain(int argc, wchar_t* argv[]) {
       if (!GetExitCodeProcess(target_process.Get(), &target_exit)) {
         return ReportWindowsError(L"GetExitCodeProcess", kHostFailureExitCode);
       }
+#if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
+      if (verify_unrelated_handle) {
+        DWORD unrelated_wait =
+            WaitForSingleObject(unrelated_inheritable.Get(), 0);
+        if (unrelated_wait == WAIT_FAILED) {
+          return ReportWindowsError(L"test handle verification",
+                                    kHostFailureExitCode);
+        }
+        if (unrelated_wait == WAIT_OBJECT_0) {
+          fwprintf(
+              stderr,
+              L"gapless_process_host: unrelated inheritable handle leaked\n");
+          return static_cast<int>(kHostFailureExitCode);
+        }
+      }
+#endif
       bool job_empty = false;
       if (!JobIsEmpty(job.Get(), &job_empty)) {
         return ReportWindowsError(L"QueryInformationJobObject",
