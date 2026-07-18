@@ -151,7 +151,7 @@ Future<_SbomVerification> _verifySpdxSbom(
     if (namespace is! String ||
         !RegExp(
           '^https://gapless\\.invalid/spdx/[0-9a-f]{40}/'
-          '${RegExp.escape(target)}\$',
+          '${RegExp.escape(target)}/post-sign-external\$',
         ).hasMatch(namespace)) {
       return _SbomVerification.invalid;
     }

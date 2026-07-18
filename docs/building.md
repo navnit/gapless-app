@@ -67,19 +67,28 @@ creation to release owners and blocks tag updates and deletions. These
 protections make the reviewed `main` commit and every published release tag
 immutable prerequisites rather than conventions.
 
-In the repository settings, create the protected `macos-release` environment,
-add the seven environment secrets above, and configure at least one required
-reviewer. The workflow has separate manual-candidate and tag entry points. A
-manual candidate runs only from `main` with version `0.1.0`; it signs,
-notarizes, validates, smoke-tests, and uploads its DMGs as Actions artifacts,
-without creating or modifying a GitHub Release.
+In the repository settings, create the protected `macos-release` environment
+and add the seven environment secrets above. For its deployment rules, set
+`Deployment branches and tags` to `Selected branches and tags`, then permit
+only `main` and `v0.1.0` for this release. Require at least one reviewer and
+enable `Prevent self-review`. These are mandatory prerequisites; a workflow
+file cannot substitute for GitHub's environment enforcement. For later
+releases, the selected-ref policy may intentionally change to only `main` and
+`v*`, but it must be documented before use.
+
+The workflow has separate manual-candidate and tag entry points. Because the
+credential-bearing build matrix uses `macos-release`, approval happens before
+credential-bearing matrix builds and signing. A manual candidate runs only
+from `main` with version `0.1.0`; after this approval it signs, notarizes,
+validates, smoke-tests, and uploads its DMGs as Actions artifacts, without
+creating or modifying a GitHub Release.
 
 After the manual candidate has passed, create annotated tag `v0.1.0` from the
-approved `main` commit and push it. The tag run builds the Apple Silicon and
-Intel DMGs only when the tag commit still equals fetched `origin/main`, then
-waits for approval in `macos-release`. Publication refuses a tag that already
-has a GitHub Release and never overwrites existing assets. Only approval of
-that tag run makes the GitHub Release public.
+approved `main` commit and push it. The tag run starts its Apple Silicon and
+Intel builds only when the tag commit still equals fetched `origin/main` and
+after protected-environment approval. Publication refuses a tag that already
+has a GitHub Release and never overwrites existing assets. The publication job
+also uses `macos-release`. Publication remains protected and approval-gated.
 
 ## Release outputs
 

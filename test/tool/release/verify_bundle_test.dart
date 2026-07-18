@@ -185,22 +185,27 @@ packages:
     );
   });
 
-  test('SBOM namespaces distinguish release targets at one revision', () {
-    const revision = '0123456789abcdef0123456789abcdef01234567';
+  test(
+    'SBOM namespaces distinguish document phases for one release target',
+    () {
+      const revision = '0123456789abcdef0123456789abcdef01234567';
 
-    final arm64 = sbomDocumentNamespace(
-      revisionSha: revision,
-      target: 'macos-arm64',
-    );
-    final x64 = sbomDocumentNamespace(
-      revisionSha: revision,
-      target: 'macos-x64',
-    );
+      final embedded = sbomDocumentNamespace(
+        revisionSha: revision,
+        target: 'macos-arm64',
+        phase: 'pre-sign-embedded',
+      );
+      final external = sbomDocumentNamespace(
+        revisionSha: revision,
+        target: 'macos-arm64',
+        phase: 'post-sign-external',
+      );
 
-    expect(arm64, isNot(x64));
-    expect(arm64, endsWith('/$revision/macos-arm64'));
-    expect(x64, endsWith('/$revision/macos-x64'));
-  });
+      expect(embedded, isNot(external));
+      expect(embedded, endsWith('/$revision/macos-arm64/pre-sign-embedded'));
+      expect(external, endsWith('/$revision/macos-arm64/post-sign-external'));
+    },
+  );
 }
 
 Future<({Directory root, File notices, File sbom})>
@@ -265,7 +270,8 @@ Future<Map<String, Object>> _exactSbomDocument(Directory bundle) async {
     'spdxVersion': 'SPDX-2.3',
     'documentNamespace':
         'https://gapless.invalid/spdx/'
-        '0123456789abcdef0123456789abcdef01234567/windows-x64',
+        '0123456789abcdef0123456789abcdef01234567/windows-x64/'
+        'post-sign-external',
     'packages': <Map<String, String>>[
       for (final name in <String>[
         'Gapless',

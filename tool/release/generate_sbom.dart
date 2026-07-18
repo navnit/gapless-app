@@ -66,6 +66,7 @@ Future<void> main(List<String> arguments) async {
     'documentNamespace': sbomDocumentNamespace(
       revisionSha: revision.sha,
       target: options.target ?? 'source',
+      phase: options.phase,
     ),
     'creationInfo': <String, Object>{
       'created': revision.created.toIso8601String(),
@@ -85,6 +86,7 @@ Future<void> main(List<String> arguments) async {
 String sbomDocumentNamespace({
   required String revisionSha,
   required String target,
+  required String phase,
 }) {
   if (!RegExp(r'^[0-9a-f]{40}$').hasMatch(revisionSha)) {
     throw const FormatException('SBOM revision must be a full Git SHA.');
@@ -92,7 +94,10 @@ String sbomDocumentNamespace({
   if (!RegExp(r'^[a-z0-9-]+$').hasMatch(target)) {
     throw const FormatException('SBOM target contains invalid characters.');
   }
-  return 'https://gapless.invalid/spdx/$revisionSha/$target';
+  if (!RegExp(r'^[a-z0-9-]+$').hasMatch(phase)) {
+    throw const FormatException('SBOM phase contains invalid characters.');
+  }
+  return 'https://gapless.invalid/spdx/$revisionSha/$target/$phase';
 }
 
 Future<List<Map<String, Object>>> resolvedPackages({
@@ -182,19 +187,29 @@ Future<({String sha, DateTime created})> _revisionIdentity() async {
 }
 
 final class _Options {
-  const _Options({required this.output, this.bundle, this.target});
+  const _Options({
+    required this.output,
+    required this.phase,
+    this.bundle,
+    this.target,
+  });
 
   final File output;
   final Directory? bundle;
   final String? target;
+  final String phase;
 
   factory _Options.parse(List<String> arguments) {
     if (arguments.isEmpty) {
-      return _Options(output: File('build/release/sbom.spdx.json'));
+      return _Options(
+        output: File('build/release/sbom.spdx.json'),
+        phase: 'source',
+      );
     }
     String? output;
     String? bundle;
     String? target;
+    String? phase;
     for (var index = 0; index < arguments.length; index += 2) {
       if (index + 1 >= arguments.length) throw const FormatException('args');
       switch (arguments[index]) {
@@ -204,19 +219,22 @@ final class _Options {
           bundle = arguments[index + 1];
         case '--target':
           target = arguments[index + 1];
+        case '--phase':
+          phase = arguments[index + 1];
         default:
           throw FormatException('Unknown argument: ${arguments[index]}');
       }
     }
-    if (output == null || bundle == null || target == null) {
+    if (output == null || bundle == null || target == null || phase == null) {
       throw const FormatException(
-        '--bundle, --output, and --target are required.',
+        '--bundle, --output, --target, and --phase are required.',
       );
     }
     return _Options(
       output: File(path.absolute(output)),
       bundle: Directory(path.absolute(bundle)),
       target: target,
+      phase: phase,
     );
   }
 }

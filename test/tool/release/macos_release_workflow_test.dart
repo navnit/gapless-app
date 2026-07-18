@@ -171,14 +171,16 @@ void main() {
       workflow,
       contains(
         'Contents/Resources/compliance/sbom.spdx.json '
-        r'--target "${{ matrix.target }}"',
+        r'--target "${{ matrix.target }}" '
+        '--phase pre-sign-embedded',
       ),
     );
     expect(
       workflow,
       contains(
         r'--output "build/sbom-${{ matrix.target }}.spdx.json" '
-        r'--target "${{ matrix.target }}"',
+        r'--target "${{ matrix.target }}" '
+        '--phase post-sign-external',
       ),
     );
     expect(
@@ -269,5 +271,30 @@ void main() {
     expect(building, contains('protected `main`'));
     expect(building, contains('`v*` tag ruleset'));
     expect(building, contains('blocks tag updates and deletions'));
+  });
+
+  test('documents mandatory protected-environment deployment rules', () {
+    final building = File('docs/building.md').readAsStringSync();
+
+    expect(building, contains('Deployment branches and tags'));
+    expect(building, contains('Selected branches and tags'));
+    expect(building, contains('only `main` and `v0.1.0`'));
+    expect(building, contains('Require at least one reviewer'));
+    expect(building, contains('enable `Prevent self-review`'));
+  });
+
+  test('documents approval before credential-bearing builds and signing', () {
+    final building = File('docs/building.md').readAsStringSync();
+
+    expect(
+      RegExp(
+        r'approval happens before\s+credential-bearing matrix builds and signing',
+      ).hasMatch(building),
+      isTrue,
+    );
+    expect(
+      building,
+      contains('Publication remains protected and approval-gated.'),
+    );
   });
 }

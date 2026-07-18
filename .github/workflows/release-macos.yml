@@ -88,7 +88,7 @@ jobs:
       - run: dart run tool/release/generate_sbom.dart
       - run: dart run tool/testing/generate_fixture_video.dart build/smoke/source.avi
       - run: flutter build macos --release
-      - run: dart run tool/release/generate_sbom.dart --bundle build/macos/Build/Products/Release/Gapless.app --output build/macos/Build/Products/Release/Gapless.app/Contents/Resources/compliance/sbom.spdx.json --target "${{ matrix.target }}"
+      - run: dart run tool/release/generate_sbom.dart --bundle build/macos/Build/Products/Release/Gapless.app --output build/macos/Build/Products/Release/Gapless.app/Contents/Resources/compliance/sbom.spdx.json --target "${{ matrix.target }}" --phase pre-sign-embedded
       - name: Import Apple signing and notarization credentials
         env:
           P12_BASE64: ${{ secrets.MACOS_P12_BASE64 }}
@@ -114,7 +114,7 @@ jobs:
         run: packaging/macos/package_dmg.sh build/macos/Build/Products/Release/Gapless.app "build/Gapless-${{ steps.version.outputs.value }}-${{ matrix.target }}.dmg"
       - name: Generate and verify final signed-app SBOM
         run: |
-          dart run tool/release/generate_sbom.dart --bundle build/macos/Build/Products/Release/Gapless.app --output "build/sbom-${{ matrix.target }}.spdx.json" --target "${{ matrix.target }}"
+          dart run tool/release/generate_sbom.dart --bundle build/macos/Build/Products/Release/Gapless.app --output "build/sbom-${{ matrix.target }}.spdx.json" --target "${{ matrix.target }}" --phase post-sign-external
           dart run tool/release/verify_bundle.dart --bundle build/macos/Build/Products/Release/Gapless.app --target "${{ matrix.target }}" --sbom "build/sbom-${{ matrix.target }}.spdx.json"
       - name: Smoke test installed macOS DMG
         run: |
