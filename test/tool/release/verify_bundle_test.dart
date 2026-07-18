@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 
+import '../../../tool/release/generate_sbom.dart';
 import '../../../tool/release/verify_bundle.dart';
 
 void main() {
@@ -102,5 +103,28 @@ void main() {
       contains('Engine checksum does not match manifest.'),
     );
     expect(report.problems, contains('Third-party notices are missing.'));
+  });
+
+  test('SBOM uses the supplied Gapless application version', () async {
+    final temp = await Directory.systemTemp.createTemp('gapless-sbom-');
+    addTearDown(() => temp.delete(recursive: true));
+    final lock = File(path.join(temp.path, 'pubspec.lock'));
+    await lock.writeAsString('''
+packages:
+  path:
+    dependency: transitive
+    description:
+      name: path
+    source: hosted
+    version: "1.9.1"
+''');
+
+    final packages = await resolvedPackages(
+      gaplessVersion: '0.1.0',
+      lockFile: lock,
+    );
+    final gapless = packages.singleWhere((node) => node['name'] == 'Gapless');
+
+    expect(gapless['versionInfo'], '0.1.0');
   });
 }

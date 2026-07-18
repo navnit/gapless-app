@@ -4,9 +4,14 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as path;
 
+import 'validate_release_version.dart';
+
 Future<void> main(List<String> arguments) async {
   final options = _Options.parse(arguments);
-  final packages = await _resolvedPackages();
+  final appVersion = ReleaseVersion.parsePubspec(
+    await File('pubspec.yaml').readAsString(),
+  );
+  final packages = await resolvedPackages(gaplessVersion: appVersion.name);
   final files = <Map<String, Object>>[];
   final relationships = <Map<String, String>>[
     for (final package in packages)
@@ -72,13 +77,16 @@ Future<void> main(List<String> arguments) async {
   );
 }
 
-Future<List<Map<String, Object>>> _resolvedPackages() async {
-  final lock = await File('pubspec.lock').readAsLines();
+Future<List<Map<String, Object>>> resolvedPackages({
+  required String gaplessVersion,
+  File? lockFile,
+}) async {
+  final lock = await (lockFile ?? File('pubspec.lock')).readAsLines();
   final packages = <Map<String, Object>>[
     <String, Object>{
       'SPDXID': 'SPDXRef-Package-gapless',
       'name': 'Gapless',
-      'versionInfo': '1.0.0',
+      'versionInfo': gaplessVersion,
       'downloadLocation': 'NOASSERTION',
       'filesAnalyzed': false,
       'licenseConcluded': 'GPL-3.0-or-later',
