@@ -423,12 +423,48 @@ Future<Map<String, Uint8List>> generateAppIconFiles() async {
   return files;
 }
 
-Future<void> writeAppIcons(Directory repositoryRoot) async {
+abstract interface class IconFileSystem {
+  const IconFileSystem();
+
+  Future<void> createParent(String path);
+  Future<void> delete(String path);
+  Future<bool> exists(String path);
+  Future<void> rename(String source, String destination);
+  Future<void> write(String path, Uint8List bytes);
+}
+
+final class IoIconFileSystem implements IconFileSystem {
+  const IoIconFileSystem();
+
+  @override
+  Future<void> createParent(String path) =>
+      File(path).parent.create(recursive: true);
+
+  @override
+  Future<void> delete(String path) => File(path).delete();
+
+  @override
+  Future<bool> exists(String path) => File(path).exists();
+
+  @override
+  Future<void> rename(String source, String destination) async {
+    await File(source).rename(destination);
+  }
+
+  @override
+  Future<void> write(String path, Uint8List bytes) =>
+      File(path).writeAsBytes(bytes, flush: true);
+}
+
+Future<void> writeAppIcons(
+  Directory repositoryRoot, {
+  IconFileSystem fileSystem = const IoIconFileSystem(),
+}) async {
   final generated = await generateAppIconFiles();
   final replacements = <_FileReplacement>[];
   for (final entry in generated.entries) {
     final destination = File('${repositoryRoot.path}/${entry.key}');
-    await destination.parent.create(recursive: true);
+    await fileSystem.createParent(destination.path);
     replacements.add(
       _FileReplacement(
         destination: destination,
@@ -441,7 +477,7 @@ Future<void> writeAppIcons(Directory repositoryRoot) async {
 
   for (final replacement in replacements) {
     for (final reserved in <File>[replacement.staging, replacement.backup]) {
-      if (await reserved.exists()) {
+      if (await fileSystem.exists(reserved.path)) {
         throw FileSystemException(
           'Refusing to overwrite reserved icon update file: ${reserved.path}',
           reserved.path,
@@ -454,54 +490,95 @@ Future<void> writeAppIcons(Directory repositoryRoot) async {
   StackTrace? operationStackTrace;
   try {
     for (final replacement in replacements) {
-      await replacement.staging.writeAsBytes(replacement.bytes, flush: true);
+      await fileSystem.write(replacement.staging.path, replacement.bytes);
     }
     for (final replacement in replacements) {
-      if (await replacement.destination.exists()) {
-        await replacement.destination.rename(replacement.backup.path);
+      if (await fileSystem.exists(replacement.destination.path)) {
+        await fileSystem.rename(
+          replacement.destination.path,
+          replacement.backup.path,
+        );
         replacement.backedUp = true;
       }
     }
     for (final replacement in replacements) {
-      await replacement.staging.rename(replacement.destination.path);
+      await fileSystem.rename(
+        replacement.staging.path,
+        replacement.destination.path,
+      );
       replacement.installed = true;
     }
-    for (final replacement in replacements) {
-      if (replacement.backedUp) await replacement.backup.delete();
-    }
-    return;
   } catch (error, stackTrace) {
     operationError = error;
     operationStackTrace = stackTrace;
   }
 
-  Object? rollbackError;
-  for (final replacement in replacements.reversed) {
-    try {
-      if (replacement.installed && await replacement.destination.exists()) {
-        await replacement.destination.delete();
+  if (operationError != null) {
+    Object? rollbackError;
+    for (final replacement in replacements.reversed) {
+      if (replacement.installed &&
+          await fileSystem.exists(replacement.destination.path)) {
+        try {
+          await fileSystem.delete(replacement.destination.path);
+        } catch (error) {
+          rollbackError ??= error;
+        }
       }
-      if (replacement.backedUp && await replacement.backup.exists()) {
-        await replacement.backup.rename(replacement.destination.path);
+      if (replacement.backedUp &&
+          await fileSystem.exists(replacement.backup.path)) {
+        try {
+          await fileSystem.rename(
+            replacement.backup.path,
+            replacement.destination.path,
+          );
+        } catch (error) {
+          rollbackError ??= error;
+        }
       }
-      if (await replacement.staging.exists()) {
-        await replacement.staging.delete();
+      if (await fileSystem.exists(replacement.staging.path)) {
+        try {
+          await fileSystem.delete(replacement.staging.path);
+        } catch (error) {
+          rollbackError ??= error;
+        }
       }
-    } catch (error) {
-      rollbackError ??= error;
     }
+
+    final message = rollbackError == null
+        ? 'Unable to update Gapless app icons; original assets restored: '
+              '$operationError'
+        : 'Unable to update Gapless app icons; rollback was incomplete: '
+              '$operationError; rollback error: $rollbackError';
+    Error.throwWithStackTrace(
+      FileSystemException(message, repositoryRoot.path),
+      operationStackTrace ?? StackTrace.current,
+    );
   }
 
-  final detail = rollbackError == null
-      ? '$operationError'
-      : '$operationError; rollback also failed: $rollbackError';
-  Error.throwWithStackTrace(
-    FileSystemException(
-      'Unable to update Gapless app icons; original assets restored: $detail',
-      repositoryRoot.path,
-    ),
-    operationStackTrace,
-  );
+  Object? backupCleanupError;
+  StackTrace? backupCleanupStackTrace;
+  for (final replacement in replacements) {
+    if (!replacement.backedUp ||
+        !await fileSystem.exists(replacement.backup.path)) {
+      continue;
+    }
+    try {
+      await fileSystem.delete(replacement.backup.path);
+    } catch (error, stackTrace) {
+      backupCleanupError ??= error;
+      backupCleanupStackTrace ??= stackTrace;
+    }
+  }
+  if (backupCleanupError != null) {
+    Error.throwWithStackTrace(
+      FileSystemException(
+        'Gapless app icons were installed, but backup cleanup failed: '
+        '$backupCleanupError',
+        repositoryRoot.path,
+      ),
+      backupCleanupStackTrace ?? StackTrace.current,
+    );
+  }
 }
 
 final class _FileReplacement {
