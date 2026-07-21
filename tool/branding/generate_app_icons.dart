@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -12,6 +13,28 @@ const _mutedAmber = Rgba(115, 88, 43, 255);
 const _transparent = Rgba(0, 0, 0, 0);
 const _pngSignature = <int>[137, 80, 78, 71, 13, 10, 26, 10];
 const _samplesPerAxis = 4;
+
+Future<void> main(List<String> arguments) async {
+  if (arguments.length > 1) {
+    stderr.writeln(
+      'Usage: dart run tool/branding/generate_app_icons.dart '
+      '[REPOSITORY_ROOT]',
+    );
+    exitCode = 64;
+    return;
+  }
+
+  final root = arguments.isEmpty ? Directory.current : Directory(arguments[0]);
+  try {
+    await writeAppIcons(root);
+    for (final path in (await generateAppIconFiles()).keys) {
+      stdout.writeln('Updated $path');
+    }
+  } on FileSystemException catch (error) {
+    stderr.writeln(error);
+    exitCode = 1;
+  }
+}
 
 final class Rgba {
   const Rgba(this.red, this.green, this.blue, this.alpha);
@@ -385,6 +408,117 @@ List<IcoFrame> inspectIco(Uint8List bytes) {
     );
   }
   return frames;
+}
+
+Future<Map<String, Uint8List>> generateAppIconFiles() async {
+  final files = LinkedHashMap<String, Uint8List>();
+  for (final size in macosIconSizes) {
+    files['macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_$size.png'] =
+        renderGaplessPng(size);
+  }
+  files['windows/runner/resources/app_icon.ico'] = encodeWindowsIco(
+    <int, Uint8List>{
+      for (final size in windowsIconSizes) size: renderGaplessPng(size),
+    },
+  );
+  return files;
+}
+
+Future<void> writeAppIcons(Directory repositoryRoot) async {
+  final generated = await generateAppIconFiles();
+  final replacements = <_FileReplacement>[];
+  for (final entry in generated.entries) {
+    final destination = File('${repositoryRoot.path}/${entry.key}');
+    await destination.parent.create(recursive: true);
+    replacements.add(
+      _FileReplacement(
+        destination: destination,
+        staging: File('${destination.path}.gapless-icon-new'),
+        backup: File('${destination.path}.gapless-icon-backup'),
+        bytes: entry.value,
+      ),
+    );
+  }
+
+  for (final replacement in replacements) {
+    for (final reserved in <File>[replacement.staging, replacement.backup]) {
+      if (await reserved.exists()) {
+        throw FileSystemException(
+          'Refusing to overwrite reserved icon update file: ${reserved.path}',
+          reserved.path,
+        );
+      }
+    }
+  }
+
+  Object? operationError;
+  StackTrace? operationStackTrace;
+  try {
+    for (final replacement in replacements) {
+      await replacement.staging.writeAsBytes(replacement.bytes, flush: true);
+    }
+    for (final replacement in replacements) {
+      if (await replacement.destination.exists()) {
+        await replacement.destination.rename(replacement.backup.path);
+        replacement.backedUp = true;
+      }
+    }
+    for (final replacement in replacements) {
+      await replacement.staging.rename(replacement.destination.path);
+      replacement.installed = true;
+    }
+    for (final replacement in replacements) {
+      if (replacement.backedUp) await replacement.backup.delete();
+    }
+    return;
+  } catch (error, stackTrace) {
+    operationError = error;
+    operationStackTrace = stackTrace;
+  }
+
+  Object? rollbackError;
+  for (final replacement in replacements.reversed) {
+    try {
+      if (replacement.installed && await replacement.destination.exists()) {
+        await replacement.destination.delete();
+      }
+      if (replacement.backedUp && await replacement.backup.exists()) {
+        await replacement.backup.rename(replacement.destination.path);
+      }
+      if (await replacement.staging.exists()) {
+        await replacement.staging.delete();
+      }
+    } catch (error) {
+      rollbackError ??= error;
+    }
+  }
+
+  final detail = rollbackError == null
+      ? '$operationError'
+      : '$operationError; rollback also failed: $rollbackError';
+  Error.throwWithStackTrace(
+    FileSystemException(
+      'Unable to update Gapless app icons; original assets restored: $detail',
+      repositoryRoot.path,
+    ),
+    operationStackTrace!,
+  );
+}
+
+final class _FileReplacement {
+  _FileReplacement({
+    required this.destination,
+    required this.staging,
+    required this.backup,
+    required this.bytes,
+  });
+
+  final File destination;
+  final File staging;
+  final File backup;
+  final Uint8List bytes;
+  bool backedUp = false;
+  bool installed = false;
 }
 
 Uint8List _uint16LittleEndian(int value) =>

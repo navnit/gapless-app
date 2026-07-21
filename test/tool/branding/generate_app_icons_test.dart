@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -47,6 +48,76 @@ void main() {
         expect(info.width, frame.size);
         expect(info.height, frame.size);
       }
+    });
+
+    test('regenerates the exact committed macOS and Windows assets', () async {
+      final generated = await generateAppIconFiles();
+
+      for (final entry in generated.entries) {
+        expect(
+          await File('${Directory.current.path}/${entry.key}').readAsBytes(),
+          entry.value,
+          reason: '${entry.key} must be regenerated before commit',
+        );
+      }
+    });
+
+    test('platform configurations reference the generated assets', () async {
+      final root = Directory.current.path;
+      final catalog = await File(
+        '$root/macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json',
+      ).readAsString();
+      for (final size in macosIconSizes) {
+        expect(catalog, contains('app_icon_$size.png'));
+      }
+
+      final runnerResource = await File(
+        '$root/windows/runner/Runner.rc',
+      ).readAsString();
+      expect(
+        runnerResource,
+        contains(
+          r'IDI_APP_ICON            ICON                    "resources\\app_icon.ico"',
+        ),
+      );
+    });
+
+    test(
+      'writes a complete generated set to a repository-shaped directory',
+      () async {
+        final root = await Directory.systemTemp.createTemp('gapless-icons-');
+        addTearDown(() => root.delete(recursive: true));
+
+        await writeAppIcons(root);
+
+        for (final path in (await generateAppIconFiles()).keys) {
+          expect(File('${root.path}/$path').existsSync(), isTrue);
+        }
+      },
+    );
+
+    test('refuses a staging collision without changing originals', () async {
+      final root = await Directory.systemTemp.createTemp('gapless-icons-');
+      addTearDown(() => root.delete(recursive: true));
+      final firstPath = (await generateAppIconFiles()).keys.first;
+      final original = File('${root.path}/$firstPath');
+      await original.parent.create(recursive: true);
+      await original.writeAsBytes(const <int>[1, 2, 3]);
+      await File(
+        '${original.path}.gapless-icon-new',
+      ).writeAsBytes(const <int>[4]);
+
+      await expectLater(
+        writeAppIcons(root),
+        throwsA(
+          isA<FileSystemException>().having(
+            (error) => error.message,
+            'message',
+            contains('.gapless-icon-new'),
+          ),
+        ),
+      );
+      expect(await original.readAsBytes(), const <int>[1, 2, 3]);
     });
   });
 }
