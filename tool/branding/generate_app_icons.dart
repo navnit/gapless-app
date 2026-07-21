@@ -1,4 +1,3 @@
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -411,7 +410,7 @@ List<IcoFrame> inspectIco(Uint8List bytes) {
 }
 
 Future<Map<String, Uint8List>> generateAppIconFiles() async {
-  final files = LinkedHashMap<String, Uint8List>();
+  final files = <String, Uint8List>{};
   for (final size in macosIconSizes) {
     files['macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_$size.png'] =
         renderGaplessPng(size);
@@ -501,7 +500,7 @@ Future<void> writeAppIcons(Directory repositoryRoot) async {
       'Unable to update Gapless app icons; original assets restored: $detail',
       repositoryRoot.path,
     ),
-    operationStackTrace!,
+    operationStackTrace,
   );
 }
 
