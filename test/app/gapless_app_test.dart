@@ -9,9 +9,13 @@ import 'package:gapless/core/process/process_runner.dart';
 import 'package:gapless/core/time/source_time_range.dart';
 import 'package:gapless/features/editor/domain/effective_timeline.dart';
 import 'package:gapless/features/editor/domain/timeline_segment.dart';
+import 'package:gapless/features/editor/domain/analysis_settings.dart';
 import 'package:gapless/features/editor/presentation/editor_screen.dart';
 import 'package:gapless/features/editor/presentation/editor_view_model.dart';
 import 'package:gapless/features/engine/data/auto_editor/auto_editor_adapter.dart';
+import 'package:gapless/features/engine/domain/engine_models.dart';
+import 'package:gapless/features/engine/domain/engine_port.dart';
+import 'package:gapless/features/export/presentation/export_dialog.dart';
 import 'package:gapless/features/playback/domain/playback_port.dart';
 import 'package:gapless/features/project/domain/project_document.dart';
 
@@ -45,6 +49,36 @@ void main() {
     expect(theme.textTheme.bodyMedium?.fontFamily, 'InstrumentSans');
     expect(theme.scaffoldBackgroundColor, const Color(0xFFE6E7E9));
     expect(theme.colorScheme.primary, const Color(0xFFE3A63B));
+  });
+
+  testWidgets('opens the export dialog when a request is dispatched', (
+    tester,
+  ) async {
+    final host = AppExportDialogHost();
+    final dependencies = AppDependencies(
+      editorViewModelFactory: () => EditorViewModel.empty(),
+      exportDialogs: AppExportDialogServices(
+        host: host,
+        engine: _StubEngine(),
+        destinationPicker: _StubPicker(),
+        revealInFolder: _StubRevealer(),
+      ),
+    );
+
+    await tester.pumpWidget(GaplessApp(dependencies: dependencies));
+
+    unawaited(
+      host.request(
+        EditorExportRequest(
+          source: Uri.file('/videos/interview.mp4'),
+          metadata: _metadata(),
+          timeline: _timeline(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey<String>('export.dialog')), findsOneWidget);
   });
 
   test(
@@ -246,3 +280,57 @@ final class _MemoryRecents implements RecentProjectsPort {
   @override
   Future<void> save(List<Uri> projects) async {}
 }
+
+final class _StubEngine implements EnginePort {
+  @override
+  EngineTask<Uri> render(RenderRequest request) => throw UnimplementedError();
+
+  @override
+  EngineTask<DetectedTimeline> detect(Uri source, AnalysisSettings settings) =>
+      throw UnimplementedError();
+
+  @override
+  EngineTask<AnalysisLevels> levels(Uri source, AnalysisMethod method) =>
+      throw UnimplementedError();
+
+  @override
+  EngineTask<MediaMetadata> probe(Uri source) => throw UnimplementedError();
+}
+
+final class _StubPicker implements ExportDestinationPicker {
+  @override
+  Future<Uri?> chooseMp4Destination(Uri? suggested) async => null;
+}
+
+final class _StubRevealer implements ExportRevealInFolder {
+  @override
+  Future<void> reveal(Uri file) async {}
+}
+
+MediaMetadata _metadata() => MediaMetadata(
+  durationUs: 1000000,
+  timebaseNumerator: 1,
+  timebaseDenominator: 30,
+  resolution: SizeInt(1920, 1080),
+  videoCodec: 'h264',
+  hasAudio: true,
+  sampleRate: 48000,
+  audioLayout: 'stereo',
+);
+
+EffectiveTimeline _timeline() => EffectiveTimeline.compose(
+  durationUs: 1000000,
+  detected: <TimelineSegment>[
+    TimelineSegment(
+      range: SourceTimeRange(0, 700000),
+      action: SegmentAction.keep,
+      origin: SegmentOrigin.detected,
+    ),
+    TimelineSegment(
+      range: SourceTimeRange(700000, 1000000),
+      action: SegmentAction.cut,
+      origin: SegmentOrigin.detected,
+    ),
+  ],
+  overrides: const <TimelineSegment>[],
+);
