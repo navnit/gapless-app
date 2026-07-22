@@ -86,7 +86,7 @@ flutter build linux --release
 
 Run `dart run tool/release/verify_bundle.dart --bundle PATH --target TARGET` on
 the resulting bundle. See [the build and release guide](docs/building.md) for deterministic
-layouts, compliance files, signing, notarization, and installer commands.
+layouts, compliance files, ad hoc signing, and installer commands.
 
 ## Design and implementation material
 

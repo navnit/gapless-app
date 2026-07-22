@@ -50,7 +50,7 @@ void main() {
     expect(File('.github/workflows/release.yml').existsSync(), isFalse);
   });
 
-  test('validates version before engine and signing work', () {
+  test('validates version before engine and packaging work', () {
     final validation = workflow.indexOf('validate_release_version.dart');
     expect(validation, greaterThanOrEqualTo(0));
     expect(validation, lessThan(workflow.indexOf('fetch_engine.dart')));
@@ -146,7 +146,7 @@ void main() {
     }
   });
 
-  test('generates and verifies each public SBOM from the final signed app', () {
+  test('generates and verifies each public SBOM from the final app', () {
     final package = workflow.indexOf('packaging/macos/package_dmg.sh');
     final finalSbom = workflow.indexOf(
       '      - name: Generate and verify final app SBOM',
