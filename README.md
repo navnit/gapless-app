@@ -7,19 +7,17 @@ suggested cuts, and export a tighter MP4.
 
 ## Project status
 
-Gapless is an MVP under active development. The repository contains the full
-offline editor workflow, installed native integration tests, and reproducible
-packaging definitions. Tagged packages are built only by the release workflow;
-the repository does not claim an artifact is published until that workflow has
-signed, verified, and uploaded it.
+Gapless 0.1.0 is the first public release target for macOS 12 or later. After
+the protected release workflow succeeds, signed Apple Silicon and Intel DMGs
+are published on the [latest GitHub Release](https://github.com/navnit/gapless/releases/latest).
+Windows and Linux remain planned targets and continue to run in verification
+CI; they are not downloadable 0.1.0 products.
 
-The intended desktop targets are:
+The development targets are:
 
 - macOS 12 or later on Apple silicon and Intel;
-- Windows 10 or later on x64;
-- Linux x64, packaged as an AppImage with an Ubuntu 24.04/glibc 2.39 baseline.
-
-Windows and Linux release validation has not been completed.
+- Windows 10 or later on x64 (planned);
+- Linux x64 (planned), packaged as an AppImage with an Ubuntu 24.04/glibc 2.39 baseline.
 
 ## Focused v1 scope
 
@@ -88,7 +86,7 @@ flutter build linux --release
 
 Run `dart run tool/release/verify_bundle.dart --bundle PATH --target TARGET` on
 the resulting bundle. See [the build and release guide](docs/building.md) for deterministic
-layouts, compliance files, signing, notarization, and installer commands.
+layouts, compliance files, ad hoc signing, and installer commands.
 
 ## Design and implementation material
 

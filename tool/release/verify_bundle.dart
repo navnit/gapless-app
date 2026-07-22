@@ -32,6 +32,7 @@ final class BundleVerifier {
   Future<BundleVerificationReport> verify(
     Directory bundleRoot, {
     required String target,
+    File? sbomFile,
   }) async {
     final layout = _BundleLayout.detect(bundleRoot);
     final problems = <String>[];
@@ -62,13 +63,25 @@ final class BundleVerifier {
     final sourceOfferFile = File(
       path.join(layout.compliance.path, 'SOURCE_OFFER.md'),
     );
-    final sbomFile = File(path.join(layout.compliance.path, 'sbom.spdx.json'));
+    final selectedSbom =
+        sbomFile ?? File(path.join(layout.compliance.path, 'sbom.spdx.json'));
     final notices = await _isNonempty(noticesFile);
     final sourceOffer = await _isNonempty(sourceOfferFile);
-    final sbom = await _validSpdxSbom(sbomFile);
+    final sbomVerification = await _verifySpdxSbom(
+      selectedSbom,
+      bundleRoot: sbomFile == null ? null : bundleRoot,
+      target: target,
+    );
+    final sbom = sbomVerification.isValid;
     if (!notices) problems.add('Third-party notices are missing.');
     if (!sourceOffer) problems.add('GPL source offer is missing.');
-    if (!sbom) problems.add('SPDX SBOM is missing.');
+    if (!sbomVerification.hasValidShape) {
+      problems.add('SPDX SBOM is missing.');
+    } else if (!sbomVerification.hasExactCoverage) {
+      problems.add('SPDX SBOM does not match bundle files.');
+    } else if (!sbomVerification.checksumsMatch) {
+      problems.add('SPDX SBOM SHA-256 does not match bundle files.');
+    }
     return BundleVerificationReport(
       engineVersion: manifest.version,
       engineTarget: target,
@@ -84,19 +97,23 @@ final class BundleVerifier {
 Future<bool> _isNonempty(File file) async =>
     await file.exists() && await file.length() > 0;
 
-Future<bool> _validSpdxSbom(File file) async {
-  if (!await _isNonempty(file)) return false;
+Future<_SbomVerification> _verifySpdxSbom(
+  File file, {
+  required Directory? bundleRoot,
+  required String target,
+}) async {
+  if (!await _isNonempty(file)) return _SbomVerification.invalid;
   try {
     final root = jsonDecode(await file.readAsString());
     if (root is! Map<String, dynamic> || root['spdxVersion'] != 'SPDX-2.3') {
-      return false;
+      return _SbomVerification.invalid;
     }
     final packages = root['packages'];
     final files = root['files'];
     if (packages is! List<dynamic> ||
         files is! List<dynamic> ||
         files.isEmpty) {
-      return false;
+      return _SbomVerification.invalid;
     }
     final names = packages
         .whereType<Map<String, dynamic>>()
@@ -109,30 +126,132 @@ Future<bool> _validSpdxSbom(File file) async {
       'auto-editor',
       'media_kit_libs_video',
     })) {
-      return false;
+      return _SbomVerification.invalid;
     }
-    return files.whereType<Map<String, dynamic>>().every((node) {
-      final checksums = node['checksums'];
-      return node['fileName'] is String &&
-          checksums is List<dynamic> &&
-          checksums.whereType<Map<String, dynamic>>().any(
-            (checksum) =>
-                checksum['algorithm'] == 'SHA256' &&
-                checksum['checksumValue'] is String,
-          );
-    });
+    final spdxFiles = files.whereType<Map<String, dynamic>>().toList();
+    final validFiles =
+        spdxFiles.length == files.length &&
+        spdxFiles.every((node) {
+          final checksums = node['checksums'];
+          return node['fileName'] is String &&
+              checksums is List<dynamic> &&
+              checksums.whereType<Map<String, dynamic>>().any(
+                (checksum) =>
+                    checksum['algorithm'] == 'SHA256' &&
+                    checksum['checksumValue'] is String &&
+                    RegExp(
+                      r'^[0-9a-f]{64}$',
+                    ).hasMatch(checksum['checksumValue']! as String),
+              );
+        });
+    if (!validFiles) return _SbomVerification.invalid;
+    if (bundleRoot == null) return _SbomVerification.shapeOnly;
+
+    final namespace = root['documentNamespace'];
+    if (namespace is! String ||
+        !RegExp(
+          '^https://gapless\\.invalid/spdx/[0-9a-f]{40}/'
+          '${RegExp.escape(target)}/post-sign-external\$',
+        ).hasMatch(namespace)) {
+      return _SbomVerification.invalid;
+    }
+
+    final actualFiles = await bundleRoot
+        .list(recursive: true, followLinks: false)
+        .where((entity) => entity is File)
+        .cast<File>()
+        .toList();
+    final actualByName = <String, File>{
+      for (final actual in actualFiles)
+        path.posix.join(
+          '.',
+          path
+              .relative(actual.path, from: bundleRoot.path)
+              .replaceAll('\\', '/'),
+        ): actual,
+    };
+    final expectedChecksums = <String, String>{};
+    var validNames = true;
+    for (final node in spdxFiles) {
+      final name = node['fileName']! as String;
+      final relativeName = name.startsWith('./') ? name.substring(2) : '';
+      if (relativeName.isEmpty ||
+          name.contains('\\') ||
+          path.posix.isAbsolute(relativeName) ||
+          path.posix.normalize(relativeName) != relativeName ||
+          expectedChecksums.containsKey(name)) {
+        validNames = false;
+        continue;
+      }
+      final checksums = node['checksums']! as List<dynamic>;
+      final checksum = checksums.whereType<Map<String, dynamic>>().firstWhere(
+        (candidate) => candidate['algorithm'] == 'SHA256',
+      );
+      expectedChecksums[name] = checksum['checksumValue']! as String;
+    }
+    final hasExactCoverage =
+        validNames &&
+        expectedChecksums.length == actualByName.length &&
+        expectedChecksums.keys.toSet().containsAll(actualByName.keys) &&
+        actualByName.keys.toSet().containsAll(expectedChecksums.keys);
+    if (!hasExactCoverage) {
+      return const _SbomVerification(
+        hasValidShape: true,
+        hasExactCoverage: false,
+        checksumsMatch: false,
+      );
+    }
+    for (final entry in actualByName.entries) {
+      final actualChecksum = (await sha256.bind(entry.value.openRead()).single)
+          .toString();
+      if (actualChecksum != expectedChecksums[entry.key]) {
+        return const _SbomVerification(
+          hasValidShape: true,
+          hasExactCoverage: true,
+          checksumsMatch: false,
+        );
+      }
+    }
+    return _SbomVerification.valid;
   } on Object {
-    return false;
+    return _SbomVerification.invalid;
   }
 }
 
+final class _SbomVerification {
+  const _SbomVerification({
+    required this.hasValidShape,
+    required this.hasExactCoverage,
+    required this.checksumsMatch,
+  });
+
+  static const invalid = _SbomVerification(
+    hasValidShape: false,
+    hasExactCoverage: false,
+    checksumsMatch: false,
+  );
+  static const shapeOnly = _SbomVerification(
+    hasValidShape: true,
+    hasExactCoverage: true,
+    checksumsMatch: true,
+  );
+  static const valid = shapeOnly;
+
+  final bool hasValidShape;
+  final bool hasExactCoverage;
+  final bool checksumsMatch;
+
+  bool get isValid => hasValidShape && hasExactCoverage && checksumsMatch;
+}
+
 Future<void> main(List<String> arguments) async {
-  if (arguments.length != 4 ||
+  if ((arguments.length != 4 && arguments.length != 6) ||
       arguments[0] != '--bundle' ||
-      arguments[2] != '--target') {
+      arguments[2] != '--target' ||
+      (arguments.length == 6 && arguments[4] != '--sbom')) {
     stderr.writeln(
       'Usage: dart run tool/release/verify_bundle.dart '
-      '--bundle PATH --target TARGET',
+      '--bundle PATH --target TARGET [--sbom PATH]',
     );
     exitCode = 64;
     return;
@@ -141,6 +260,9 @@ Future<void> main(List<String> arguments) async {
     final report = await const BundleVerifier().verify(
       Directory(path.absolute(arguments[1])),
       target: arguments[3],
+      sbomFile: arguments.length == 6
+          ? File(path.absolute(arguments[5]))
+          : null,
     );
     if (!report.isValid) {
       for (final problem in report.problems) {

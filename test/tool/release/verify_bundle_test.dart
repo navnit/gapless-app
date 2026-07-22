@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 
+import '../../../tool/release/generate_sbom.dart';
 import '../../../tool/release/verify_bundle.dart';
 
 void main() {
@@ -103,4 +104,196 @@ void main() {
     );
     expect(report.problems, contains('Third-party notices are missing.'));
   });
+
+  test('SBOM uses the supplied Gapless application version', () async {
+    final temp = await Directory.systemTemp.createTemp('gapless-sbom-');
+    addTearDown(() => temp.delete(recursive: true));
+    final lock = File(path.join(temp.path, 'pubspec.lock'));
+    await lock.writeAsString('''
+packages:
+  path:
+    dependency: transitive
+    description:
+      name: path
+    source: hosted
+    version: "1.9.1"
+''');
+
+    final packages = await resolvedPackages(
+      gaplessVersion: '0.1.0',
+      lockFile: lock,
+    );
+    final gapless = packages.singleWhere((node) => node['name'] == 'Gapless');
+
+    expect(gapless['versionInfo'], '0.1.0');
+  });
+
+  test('external SBOM rejects a nonexistent bundle entry', () async {
+    final fixture = await _releaseBundleFixture();
+    addTearDown(() => fixture.root.parent.delete(recursive: true));
+    final document = await _exactSbomDocument(fixture.root);
+    (document['files']! as List<Object?>).add(
+      _spdxFile('./does-not-exist', List<String>.filled(64, '0').join()),
+    );
+    await fixture.sbom.writeAsString(jsonEncode(document));
+
+    final report = await const BundleVerifier().verify(
+      fixture.root,
+      target: 'windows-x64',
+      sbomFile: fixture.sbom,
+    );
+
+    expect(report.hasSbom, isFalse);
+    expect(report.problems, contains('SPDX SBOM does not match bundle files.'));
+  });
+
+  test('external SBOM rejects missing regular-file coverage', () async {
+    final fixture = await _releaseBundleFixture();
+    addTearDown(() => fixture.root.parent.delete(recursive: true));
+    final document = await _exactSbomDocument(fixture.root);
+    (document['files']! as List<Object?>).removeLast();
+    await fixture.sbom.writeAsString(jsonEncode(document));
+
+    final report = await const BundleVerifier().verify(
+      fixture.root,
+      target: 'windows-x64',
+      sbomFile: fixture.sbom,
+    );
+
+    expect(report.hasSbom, isFalse);
+    expect(report.problems, contains('SPDX SBOM does not match bundle files.'));
+  });
+
+  test('external SBOM rejects bundle tampering after generation', () async {
+    final fixture = await _releaseBundleFixture();
+    addTearDown(() => fixture.root.parent.delete(recursive: true));
+    await fixture.sbom.writeAsString(
+      jsonEncode(await _exactSbomDocument(fixture.root)),
+    );
+    await fixture.notices.writeAsString('tampered notices');
+
+    final report = await const BundleVerifier().verify(
+      fixture.root,
+      target: 'windows-x64',
+      sbomFile: fixture.sbom,
+    );
+
+    expect(report.hasSbom, isFalse);
+    expect(
+      report.problems,
+      contains('SPDX SBOM SHA-256 does not match bundle files.'),
+    );
+  });
+
+  test(
+    'SBOM namespaces distinguish document phases for one release target',
+    () {
+      const revision = '0123456789abcdef0123456789abcdef01234567';
+
+      final embedded = sbomDocumentNamespace(
+        revisionSha: revision,
+        target: 'macos-arm64',
+        phase: 'pre-sign-embedded',
+      );
+      final external = sbomDocumentNamespace(
+        revisionSha: revision,
+        target: 'macos-arm64',
+        phase: 'post-sign-external',
+      );
+
+      expect(embedded, isNot(external));
+      expect(embedded, endsWith('/$revision/macos-arm64/pre-sign-embedded'));
+      expect(external, endsWith('/$revision/macos-arm64/post-sign-external'));
+    },
+  );
 }
+
+Future<({Directory root, File notices, File sbom})>
+_releaseBundleFixture() async {
+  final temp = await Directory.systemTemp.createTemp('gapless-sbom-bundle-');
+  final root = Directory(path.join(temp.path, 'bundle'));
+  final engine = File(path.join(root.path, 'engine', 'auto-editor.exe'));
+  await engine.parent.create(recursive: true);
+  await engine.writeAsBytes(<int>[1, 2, 3, 4]);
+  final checksum = sha256.convert(await engine.readAsBytes()).toString();
+  await File(path.join(engine.parent.path, 'manifest.json')).writeAsString(
+    jsonEncode(<String, Object>{
+      'engine': 'auto-editor',
+      'version': '31.2.0',
+      'targets': <String, Object>{
+        'windows-x64': <String, Object>{
+          'installedFile': 'auto-editor.exe',
+          'sha256': checksum,
+        },
+      },
+    }),
+  );
+  final compliance = Directory(path.join(root.path, 'compliance'));
+  await compliance.create();
+  final notices = File(path.join(compliance.path, 'THIRD_PARTY_NOTICES.md'));
+  await notices.writeAsString('notices');
+  await File(
+    path.join(compliance.path, 'SOURCE_OFFER.md'),
+  ).writeAsString('source offer');
+  await File(path.join(compliance.path, 'sbom.spdx.json')).writeAsString(
+    jsonEncode(<String, Object>{
+      'spdxVersion': 'SPDX-2.3',
+      'packages': <Map<String, String>>[
+        for (final name in <String>[
+          'Gapless',
+          'Flutter',
+          'auto-editor',
+          'media_kit_libs_video',
+        ])
+          <String, String>{'name': name},
+      ],
+      'files': <Map<String, Object>>[
+        _spdxFile('./engine/auto-editor.exe', checksum),
+      ],
+    }),
+  );
+  return (
+    root: root,
+    notices: notices,
+    sbom: File(path.join(temp.path, 'sbom-windows-x64.spdx.json')),
+  );
+}
+
+Future<Map<String, Object>> _exactSbomDocument(Directory bundle) async {
+  final files = await bundle
+      .list(recursive: true, followLinks: false)
+      .where((entity) => entity is File)
+      .cast<File>()
+      .toList();
+  files.sort((left, right) => left.path.compareTo(right.path));
+  return <String, Object>{
+    'spdxVersion': 'SPDX-2.3',
+    'documentNamespace':
+        'https://gapless.invalid/spdx/'
+        '0123456789abcdef0123456789abcdef01234567/windows-x64/'
+        'post-sign-external',
+    'packages': <Map<String, String>>[
+      for (final name in <String>[
+        'Gapless',
+        'Flutter',
+        'auto-editor',
+        'media_kit_libs_video',
+      ])
+        <String, String>{'name': name},
+    ],
+    'files': <Map<String, Object>>[
+      for (final file in files)
+        _spdxFile(
+          './${path.relative(file.path, from: bundle.path).replaceAll('\\', '/')}',
+          (await sha256.bind(file.openRead()).single).toString(),
+        ),
+    ],
+  };
+}
+
+Map<String, Object> _spdxFile(String name, String checksum) => <String, Object>{
+  'fileName': name,
+  'checksums': <Map<String, String>>[
+    <String, String>{'algorithm': 'SHA256', 'checksumValue': checksum},
+  ],
+};
