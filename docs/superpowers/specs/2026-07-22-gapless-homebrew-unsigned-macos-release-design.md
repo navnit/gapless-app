@@ -63,10 +63,23 @@ The workflow publishes these immutable assets for version `X.Y.Z`:
 - one SPDX SBOM per architecture
 - `building.md`
 - `THIRD_PARTY_NOTICES.md`
+- `SOURCE_OFFER.md`
 
-The 0.1.0 release workflow is unsigned-only and does not read or require Apple
-secrets. Its packaging path signs executable components from the inside out
-using the ad hoc identity (`-`), verifies the final app with `codesign`, creates
+`THIRD_PARTY_NOTICES.md` and `SOURCE_OFFER.md` are published as release assets
+and are also copied into `Gapless.app/Contents/Resources/compliance` so the
+compliance material travels with an installed, offline app.
+
+The 0.1.0 release workflow is unsigned-only. The signing- and
+notarization-secret validation, keychain import, and notarize/staple steps are
+removed outright, and the `macos-release` environment no longer defines any
+`MACOS_*` secret, so the workflow contains no reference to Apple credentials. If
+signed and notarized publishing returns later, it is re-added fresh as a
+separate release mode rather than left dormant behind a flag.
+
+Its packaging path ad hoc signs executable components from the inside out with
+`codesign --force --sign -`, deliberately omitting the `--options runtime` and
+`--timestamp` flags, which apply only to Developer ID signing and notarization.
+It then verifies the final app with `codesign --verify --deep --strict`, creates
 the DMG, mounts it, runs the installed smoke test, and verifies the mounted
 bundle. It does not run `spctl` as a success gate because Gatekeeper is expected
 to reject an unnotarized downloaded application.
@@ -141,7 +154,7 @@ is a new downloaded artifact.
 ## Failure handling
 
 - Missing or partially configured Apple secrets cannot block the workflow,
-  because the unsigned-only workflow does not inspect them.
+  because the unsigned-only workflow no longer defines or references them.
 - Packaging stops before publication if ad hoc signing, bundle verification,
   mounted smoke testing, SBOM generation, or checksum generation fails.
 - The workflow refuses to overwrite an existing GitHub Release for the tag.
