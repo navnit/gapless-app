@@ -7,6 +7,11 @@
 AppId={{A42DC45D-AEEC-4D95-984A-E389D2A683AF}
 AppName={#AppName}
 AppVersion={#AppVersion}
+AppPublisher=Navnit Durai
+AppPublisherURL=https://navnit.me/gapless
+AppSupportURL=https://navnit.me/gapless
+AppUpdatesURL=https://navnit.me/gapless
+AppCopyright=Copyright (C) 2026 Navnit Durai. All rights reserved.
 DefaultDirName={autopf}\Gapless
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

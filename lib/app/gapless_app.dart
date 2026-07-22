@@ -19,6 +19,7 @@ final class GaplessApp extends StatefulWidget {
 final class _GaplessAppState extends State<GaplessApp> {
   late final EditorViewModel _editor = widget.dependencies
       .createEditorViewModel();
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<AppExportDialogRequest>? _exportRequests;
 
   @override
@@ -45,9 +46,10 @@ final class _GaplessAppState extends State<GaplessApp> {
   ) async {
     final coordinator = ExportCoordinator(engine: services.engine);
     try {
-      if (!mounted) return;
+      final dialogContext = _navigatorKey.currentContext;
+      if (!mounted || dialogContext == null) return;
       await showDialog<void>(
-        context: context,
+        context: dialogContext,
         barrierDismissible: false,
         builder: (_) => ExportDialog(
           coordinator: coordinator,
@@ -67,6 +69,7 @@ final class _GaplessAppState extends State<GaplessApp> {
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'Gapless',
+    navigatorKey: _navigatorKey,
     debugShowCheckedModeBanner: false,
     themeMode: ThemeMode.system,
     theme: _gaplessTheme(Brightness.light),
