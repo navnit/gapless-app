@@ -360,6 +360,25 @@ int ReportWindowsError(const wchar_t* operation, DWORD exit_code,
 }  // namespace
 
 int wmain(int argc, wchar_t* argv[]) {
+#if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
+  if (argc == 2 &&
+      wcscmp(argv[1], L"--test-signal-unrelated-handle") == 0) {
+    wchar_t raw_handle[32]{};
+    const DWORD raw_handle_length = GetEnvironmentVariableW(
+        L"GPH_TEST_UNRELATED_HANDLE", raw_handle,
+        sizeof(raw_handle) / sizeof(raw_handle[0]));
+    uint64_t parsed_handle = 0;
+    if (raw_handle_length == 0 ||
+        raw_handle_length >= sizeof(raw_handle) / sizeof(raw_handle[0]) ||
+        !ParseMilliseconds(raw_handle, &parsed_handle)) {
+      return 42;
+    }
+    const HANDLE inherited_handle = reinterpret_cast<HANDLE>(
+        static_cast<uintptr_t>(parsed_handle));
+    return SetEvent(inherited_handle) != FALSE ? 0 : 42;
+  }
+#endif
+
   uint64_t grace_milliseconds = 0;
   uint64_t force_milliseconds = 0;
   if (argc < 7 || wcscmp(argv[1], L"--grace-ms") != 0 ||
@@ -432,6 +451,8 @@ int wmain(int argc, wchar_t* argv[]) {
 #if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
   UniqueHandle unrelated_inheritable(CreateEventW(&security, TRUE, FALSE,
                                                    nullptr));
+  bool verify_unrelated_handle = false;
+  bool include_unrelated_handle = false;
   if (GetEnvironmentVariableW(L"GPH_TEST_CREATE_UNRELATED_HANDLE", nullptr,
                               0) != 0) {
     if (!unrelated_inheritable.IsValid()) {
@@ -448,6 +469,10 @@ int wmain(int argc, wchar_t* argv[]) {
       return ReportWindowsError(L"test handle publication",
                                 kHostFailureExitCode);
     }
+    verify_unrelated_handle = true;
+    include_unrelated_handle =
+        GetEnvironmentVariableW(L"GPH_TEST_INCLUDE_UNRELATED_HANDLE", nullptr,
+                                0) != 0;
   }
 #endif
 
@@ -469,9 +494,21 @@ int wmain(int argc, wchar_t* argv[]) {
     return ReportWindowsError(L"job attribute setup", kHostFailureExitCode);
   }
   HANDLE inherited_handles[] = {
-      null_input.Get(), child_output.Get(), child_error.Get()};
+      null_input.Get(),
+      child_output.Get(),
+      child_error.Get(),
+#if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
+      unrelated_inheritable.Get(),
+#endif
+  };
+  SIZE_T inherited_handle_bytes = 3 * sizeof(HANDLE);
+#if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
+  if (include_unrelated_handle) {
+    inherited_handle_bytes = sizeof(inherited_handles);
+  }
+#endif
   if (!attributes.Update(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited_handles,
-                         sizeof(inherited_handles))) {
+                         inherited_handle_bytes)) {
     return ReportWindowsError(L"handle attribute setup", kHostFailureExitCode);
   }
   startup.lpAttributeList = attributes.Get();
@@ -518,6 +555,22 @@ int wmain(int argc, wchar_t* argv[]) {
       if (!GetExitCodeProcess(target_process.Get(), &target_exit)) {
         return ReportWindowsError(L"GetExitCodeProcess", kHostFailureExitCode);
       }
+#if defined(GAPLESS_PROCESS_HOST_TESTING) && GAPLESS_PROCESS_HOST_TESTING
+      if (verify_unrelated_handle) {
+        DWORD unrelated_wait =
+            WaitForSingleObject(unrelated_inheritable.Get(), 0);
+        if (unrelated_wait == WAIT_FAILED) {
+          return ReportWindowsError(L"test handle verification",
+                                    kHostFailureExitCode);
+        }
+        if (unrelated_wait == WAIT_OBJECT_0) {
+          fwprintf(
+              stderr,
+              L"gapless_process_host: unrelated inheritable handle leaked\n");
+          return static_cast<int>(kHostFailureExitCode);
+        }
+      }
+#endif
       bool job_empty = false;
       if (!JobIsEmpty(job.Get(), &job_empty)) {
         return ReportWindowsError(L"QueryInformationJobObject",

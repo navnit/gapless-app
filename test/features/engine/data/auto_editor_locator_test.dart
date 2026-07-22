@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gapless/core/errors/app_failure.dart';
 import 'package:gapless/core/process/process_runner.dart';
 import 'package:gapless/features/engine/data/auto_editor/auto_editor_locator.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   group('nativeAutoEditorInstallRoot', () {
@@ -117,7 +118,7 @@ void main() {
       temp = Directory.systemTemp.createTempSync('gapless-locator-test-');
       runner = LocatorProcessRunner(version: '31.2.0');
       locator = AutoEditorLocator(
-        manifestPath: '${temp.path}/manifest.json',
+        manifestPath: p.join(temp.path, 'manifest.json'),
         installRoot: temp.path,
         processRunner: runner,
         target: 'windows-x64',
@@ -129,8 +130,9 @@ void main() {
     });
 
     test('returns only absolute checksum and version verified path', () async {
-      final directory = Directory('${temp.path}/windows-x64')..createSync();
-      final executable = File('${directory.path}/auto-editor.exe')
+      final directory = Directory(p.join(temp.path, 'windows-x64'))
+        ..createSync();
+      final executable = File(p.join(directory.path, 'auto-editor.exe'))
         ..writeAsStringSync('pinned binary bytes');
       final digest = sha256.convert(executable.readAsBytesSync()).toString();
 
@@ -145,7 +147,7 @@ void main() {
     test(
       'accepts the deterministic direct path used by native bundles',
       () async {
-        final executable = File('${temp.path}/auto-editor.exe')
+        final executable = File(p.join(temp.path, 'auto-editor.exe'))
           ..writeAsStringSync('pinned bundle bytes');
         final digest = sha256.convert(executable.readAsBytesSync()).toString();
 
@@ -162,8 +164,11 @@ void main() {
         throwsA(isA<EngineMissingFailure>()),
       );
 
-      final directory = Directory('${temp.path}/windows-x64')..createSync();
-      File('${directory.path}/auto-editor.exe').writeAsStringSync('wrong');
+      final directory = Directory(p.join(temp.path, 'windows-x64'))
+        ..createSync();
+      File(
+        p.join(directory.path, 'auto-editor.exe'),
+      ).writeAsStringSync('wrong');
       await expectLater(
         locator.verifyTarget(_target(sha256: _zeroDigest)),
         throwsA(
@@ -183,8 +188,9 @@ void main() {
     });
 
     test('rejects version drift with bounded structured diagnostics', () async {
-      final directory = Directory('${temp.path}/windows-x64')..createSync();
-      final executable = File('${directory.path}/auto-editor.exe')
+      final directory = Directory(p.join(temp.path, 'windows-x64'))
+        ..createSync();
+      final executable = File(p.join(directory.path, 'auto-editor.exe'))
         ..writeAsStringSync('binary');
       final digest = sha256.convert(executable.readAsBytesSync()).toString();
       runner.version = '31.2.1';
@@ -210,13 +216,14 @@ void main() {
     test('requires executable permission for POSIX targets', () async {
       if (Platform.isWindows) return;
       final posixLocator = AutoEditorLocator(
-        manifestPath: '${temp.path}/manifest.json',
+        manifestPath: p.join(temp.path, 'manifest.json'),
         installRoot: temp.path,
         processRunner: runner,
         target: 'macos-arm64',
       );
-      final directory = Directory('${temp.path}/macos-arm64')..createSync();
-      final executable = File('${directory.path}/auto-editor')
+      final directory = Directory(p.join(temp.path, 'macos-arm64'))
+        ..createSync();
+      final executable = File(p.join(directory.path, 'auto-editor'))
         ..writeAsStringSync('binary');
       final chmod = await Process.run('/bin/chmod', ['644', executable.path]);
       expect(chmod.exitCode, 0);

@@ -86,7 +86,15 @@ void main() {
           EngineContractFailure(operation: 'analysis', reason: reason),
         );
 
-        expect(presentation.title, 'Editing engine could not finish');
+        expect(
+          presentation.title,
+          reason == EngineContractReason.unsupportedSources
+              ? 'A video file is required'
+              : 'Editing engine could not finish',
+        );
+        if (reason == EngineContractReason.unsupportedSources) {
+          expect(presentation.body, contains('Audio-only files'));
+        }
         expect(presentation.primaryAction, FailureAction.retry);
         expect(presentation.secondaryAction, FailureAction.copyDiagnostics);
         expect(presentation.destructive, isFalse);

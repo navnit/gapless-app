@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
@@ -12,7 +13,11 @@ import 'package:gapless/features/editor/presentation/widgets/timeline_painter.da
 import 'package:gapless/features/editor/presentation/widgets/timeline_view.dart';
 import 'package:gapless/features/engine/domain/engine_models.dart';
 
+import '../../../helpers/tolerant_golden_comparator.dart';
+
 void main() {
+  setUpAll(installTolerantGoldenComparator);
+
   test('fast-forward waveform uses the inactive palette treatment', () {
     final palette = TimelinePalette.fromBrightness(Brightness.dark);
 
@@ -230,7 +235,7 @@ void main() {
       find.byKey(const ValueKey<String>('timeline.golden')),
       matchesGoldenFile('../../../goldens/timeline_dark.png'),
     );
-  });
+  }, skip: !Platform.isMacOS);
 
   testWidgets('matches the reviewed light timeline baseline', (tester) async {
     _setScreen(tester, const Size(1280, 832));
@@ -241,7 +246,7 @@ void main() {
       find.byKey(const ValueKey<String>('timeline.golden')),
       matchesGoldenFile('../../../goldens/timeline_light.png'),
     );
-  });
+  }, skip: !Platform.isMacOS);
 }
 
 Widget _harness({

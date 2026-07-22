@@ -4,9 +4,14 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as path;
 
+import 'validate_release_version.dart';
+
 Future<void> main(List<String> arguments) async {
   final options = _Options.parse(arguments);
-  final packages = await _resolvedPackages();
+  final appVersion = ReleaseVersion.parsePubspec(
+    await File('pubspec.yaml').readAsString(),
+  );
+  final packages = await resolvedPackages(gaplessVersion: appVersion.name);
   final files = <Map<String, Object>>[];
   final relationships = <Map<String, String>>[
     for (final package in packages)
@@ -55,8 +60,14 @@ Future<void> main(List<String> arguments) async {
     'spdxVersion': 'SPDX-2.3',
     'dataLicense': 'CC0-1.0',
     'SPDXID': 'SPDXRef-DOCUMENT',
-    'name': 'Gapless-${Platform.environment['GITHUB_REF_NAME'] ?? 'local'}',
-    'documentNamespace': 'https://gapless.invalid/spdx/${revision.sha}',
+    'name':
+        'Gapless-${Platform.environment['GITHUB_REF_NAME'] ?? 'local'}-'
+        '${options.target ?? 'source'}',
+    'documentNamespace': sbomDocumentNamespace(
+      revisionSha: revision.sha,
+      target: options.target ?? 'source',
+      phase: options.phase,
+    ),
     'creationInfo': <String, Object>{
       'created': revision.created.toIso8601String(),
       'creators': <String>['Tool: Gapless-generate-sbom'],
@@ -72,13 +83,33 @@ Future<void> main(List<String> arguments) async {
   );
 }
 
-Future<List<Map<String, Object>>> _resolvedPackages() async {
-  final lock = await File('pubspec.lock').readAsLines();
+String sbomDocumentNamespace({
+  required String revisionSha,
+  required String target,
+  required String phase,
+}) {
+  if (!RegExp(r'^[0-9a-f]{40}$').hasMatch(revisionSha)) {
+    throw const FormatException('SBOM revision must be a full Git SHA.');
+  }
+  if (!RegExp(r'^[a-z0-9-]+$').hasMatch(target)) {
+    throw const FormatException('SBOM target contains invalid characters.');
+  }
+  if (!RegExp(r'^[a-z0-9-]+$').hasMatch(phase)) {
+    throw const FormatException('SBOM phase contains invalid characters.');
+  }
+  return 'https://gapless.invalid/spdx/$revisionSha/$target/$phase';
+}
+
+Future<List<Map<String, Object>>> resolvedPackages({
+  required String gaplessVersion,
+  File? lockFile,
+}) async {
+  final lock = await (lockFile ?? File('pubspec.lock')).readAsLines();
   final packages = <Map<String, Object>>[
     <String, Object>{
       'SPDXID': 'SPDXRef-Package-gapless',
       'name': 'Gapless',
-      'versionInfo': '1.0.0',
+      'versionInfo': gaplessVersion,
       'downloadLocation': 'NOASSERTION',
       'filesAnalyzed': false,
       'licenseConcluded': 'GPL-3.0-or-later',
@@ -156,17 +187,29 @@ Future<({String sha, DateTime created})> _revisionIdentity() async {
 }
 
 final class _Options {
-  const _Options({required this.output, this.bundle});
+  const _Options({
+    required this.output,
+    required this.phase,
+    this.bundle,
+    this.target,
+  });
 
   final File output;
   final Directory? bundle;
+  final String? target;
+  final String phase;
 
   factory _Options.parse(List<String> arguments) {
     if (arguments.isEmpty) {
-      return _Options(output: File('build/release/sbom.spdx.json'));
+      return _Options(
+        output: File('build/release/sbom.spdx.json'),
+        phase: 'source',
+      );
     }
     String? output;
     String? bundle;
+    String? target;
+    String? phase;
     for (var index = 0; index < arguments.length; index += 2) {
       if (index + 1 >= arguments.length) throw const FormatException('args');
       switch (arguments[index]) {
@@ -174,16 +217,24 @@ final class _Options {
           output = arguments[index + 1];
         case '--bundle':
           bundle = arguments[index + 1];
+        case '--target':
+          target = arguments[index + 1];
+        case '--phase':
+          phase = arguments[index + 1];
         default:
           throw FormatException('Unknown argument: ${arguments[index]}');
       }
     }
-    if (output == null || bundle == null) {
-      throw const FormatException('--bundle and --output are required.');
+    if (output == null || bundle == null || target == null || phase == null) {
+      throw const FormatException(
+        '--bundle, --output, --target, and --phase are required.',
+      );
     }
     return _Options(
       output: File(path.absolute(output)),
       bundle: Directory(path.absolute(bundle)),
+      target: target,
+      phase: phase,
     );
   }
 }

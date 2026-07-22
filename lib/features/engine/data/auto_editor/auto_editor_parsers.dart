@@ -20,6 +20,10 @@ abstract final class AutoEditorParsers {
       'recommendedTimebase',
     );
     final video = _list(media['video'], 'video');
+    final audio = _list(media['audio'], 'audio');
+    if (video.isEmpty && audio.isNotEmpty) {
+      throw UnsupportedError('Audio-only sources are not supported');
+    }
     if (video.length != 1) {
       throw const FormatException('Expected exactly one video stream');
     }
@@ -30,7 +34,6 @@ abstract final class AutoEditorParsers {
       throw const FormatException('Expected width and height');
     }
 
-    final audio = _list(media['audio'], 'audio');
     if (audio.length > 1) {
       throw const FormatException('Expected at most one audio stream');
     }

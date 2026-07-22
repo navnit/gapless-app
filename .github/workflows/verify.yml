@@ -20,7 +20,7 @@ jobs:
           - os: windows-2025
             device: windows
             build: windows
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             device: linux
             build: linux
     runs-on: ${{ matrix.os }}
@@ -30,6 +30,11 @@ jobs:
         with:
           flutter-version: 3.44.4
           cache: true
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libmpv-dev mpv
       - run: flutter pub get
       - run: dart run tool/engine/fetch_engine.dart
       - run: dart run tool/engine/fetch_engine.dart --verify-only
@@ -57,3 +62,5 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Ensure PR workflow has no signing secrets
         run: '! grep -R "secrets\." .github/workflows/verify.yml'
+      - name: Ensure the macOS release workflow references no Apple secrets
+        run: '! grep -R -E "MACOS_|secrets\." .github/workflows/release-macos.yml'

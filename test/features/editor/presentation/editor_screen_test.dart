@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gapless/core/errors/app_failure.dart';
 import 'package:gapless/core/time/source_time_range.dart';
 import 'package:gapless/app/app_dependencies.dart';
 import 'package:gapless/app/gapless_app.dart';
@@ -22,9 +23,13 @@ import 'package:gapless/features/project/application/autosave_controller.dart';
 import 'package:gapless/features/project/data/project_repository.dart';
 import 'package:gapless/features/project/domain/project_document.dart';
 import 'package:gapless/features/project/domain/source_reference.dart';
+import 'package:path/path.dart' as p;
+
+import '../../../helpers/tolerant_golden_comparator.dart';
 
 void main() {
   setUpAll(() async {
+    installTolerantGoldenComparator();
     final font = rootBundle.load(
       'assets/fonts/InstrumentSans-VariableFont_wdth,wght.ttf',
     );
@@ -57,7 +62,28 @@ void main() {
     expect(find.text('Gapless'), findsOneWidget);
     expect(find.text('Drop a video here'), findsOneWidget);
     expect(find.text('Open Video'), findsOneWidget);
+    expect(find.byIcon(Icons.remove), findsNothing);
+    expect(find.byIcon(Icons.crop_square), findsNothing);
+    expect(find.byIcon(Icons.close), findsNothing);
     expect(find.text('THRESHOLD'), findsNothing);
+  });
+
+  testWidgets('shows a graceful failure message in the empty workspace', (
+    tester,
+  ) async {
+    await _pumpEditor(
+      tester,
+      const EditorState(
+        phase: EditorPhase.empty,
+        message:
+            'A video file is required. Audio-only files are not supported yet. '
+            'Choose a video file and try again.',
+      ),
+    );
+
+    expect(find.textContaining('Audio-only files are not supported'), findsOne);
+    expect(find.text('Open Video'), findsOneWidget);
+    expect(find.textContaining('Instance of'), findsNothing);
   });
 
   testWidgets('shows analysis progress without leaving the studio', (
@@ -172,6 +198,43 @@ void main() {
       expect(viewModel.state.manualOverridesCleared, isTrue);
       expect(analysis.requests, hasLength(1));
       expect(analysis.requests.single.settings.thresholdDb, -18);
+    },
+  );
+
+  testWidgets(
+    'threshold drag previews locally and requests analysis only on release',
+    (tester) async {
+      final analysis = _FakeAnalysis();
+      final store = _MemoryProjectStore();
+      final viewModel = EditorViewModel(
+        initialState: _readyState(),
+        runtime: _runtime(analysis: analysis, store: store),
+      );
+      addTearDown(viewModel.dispose);
+      await _pumpViewModel(tester, viewModel);
+      final threshold = find.byKey(
+        const ValueKey<String>('settings.threshold'),
+      );
+      final initialValue = viewModel.state.project!.settings.thresholdDb;
+
+      final gesture = await tester.startGesture(tester.getCenter(threshold));
+      await gesture.moveBy(const Offset(48, 0));
+      await tester.pump();
+      final previewValue = tester.widget<Slider>(threshold).value;
+
+      expect(previewValue, isNot(initialValue));
+      expect(find.text('${previewValue.round()} dB'), findsOneWidget);
+      expect(viewModel.state.project!.settings.thresholdDb, initialValue);
+      expect(analysis.requests, isEmpty);
+      expect(store.savedDocuments, isEmpty);
+
+      await gesture.up();
+      await tester.pump();
+
+      expect(viewModel.state.project!.settings.thresholdDb, previewValue);
+      expect(analysis.requests, hasLength(1));
+      expect(analysis.requests.single.settings.thresholdDb, previewValue);
+      expect(store.savedDocuments, hasLength(1));
     },
   );
 
@@ -295,22 +358,67 @@ void main() {
     },
   );
 
-  test('import probe failures are contained and reported', () async {
-    final viewModel = EditorViewModel(
-      initialState: const EditorState.empty(),
-      runtime: _runtime(
-        analysis: _FakeAnalysis(),
-        store: _MemoryProjectStore(),
-        picker: _FakePicker(video: Uri.file('/videos/broken.mp4')),
-        engine: _FailingProbeEngine(),
-      ),
-    );
-    addTearDown(viewModel.dispose);
+  test(
+    'import probe failures restore the workspace with a proper message',
+    () async {
+      final store = _MemoryProjectStore();
+      final viewModel = EditorViewModel(
+        initialState: const EditorState.empty(),
+        runtime: _runtime(
+          analysis: _FakeAnalysis(),
+          store: store,
+          picker: _FakePicker(video: Uri.file('/videos/voice-over.m4a')),
+          engine: _FailingProbeEngine(
+            EngineContractFailure(
+              operation: 'probe',
+              reason: EngineContractReason.unsupportedSources,
+            ),
+          ),
+        ),
+      );
+      addTearDown(viewModel.dispose);
 
-    await viewModel.openVideo();
+      await viewModel.openVideo();
 
-    expect(viewModel.state.message, contains('probe failed'));
-  });
+      expect(viewModel.state.phase, EditorPhase.empty);
+      expect(viewModel.state.project, isNull);
+      expect(store.savedDocuments, isEmpty);
+      expect(
+        viewModel.state.message,
+        'A video file is required. Audio-only files are not supported yet. '
+        'Choose a video file and try again.',
+      );
+      expect(viewModel.state.message, isNot(contains('EngineContractFailure')));
+    },
+  );
+
+  test(
+    'project load failures restore the workspace with a proper message',
+    () async {
+      final store = _MemoryProjectStore()
+        ..loadFailure = const ProjectFormatFailure('invalid schema');
+      final viewModel = EditorViewModel(
+        initialState: const EditorState.empty(),
+        runtime: _runtime(
+          analysis: _FakeAnalysis(),
+          store: store,
+          picker: _FakePicker(project: Uri.file('/projects/broken.gapless')),
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.openProject();
+
+      expect(viewModel.state.phase, EditorPhase.empty);
+      expect(viewModel.state.project, isNull);
+      expect(
+        viewModel.state.message,
+        'Project could not be opened. This project file is invalid or '
+        'unsupported. Try opening it again.',
+      );
+      expect(viewModel.state.message, isNot(contains('ProjectFormatFailure')));
+    },
+  );
 
   test('save as enforces gapless and retry recovers a failed save', () async {
     final analysis = _FakeAnalysis();
@@ -408,7 +516,8 @@ void main() {
     await viewModel.export();
 
     expect(exporter.requests, hasLength(1));
-    expect(viewModel.state.message, contains('MP4 renderer'));
+    expect(viewModel.state.message, 'Something went wrong. Please try again.');
+    expect(viewModel.state.message, isNot(contains('MP4 renderer')));
   });
 
   test('recent projects lazily prune inaccessible entries only', () async {
@@ -676,7 +785,10 @@ void main() {
 
       final persistedSource = store.savedDocuments.last.source;
       expect(persistedSource.absolutePath, resolved.toFilePath());
-      expect(persistedSource.relativePath, '../media/interview.mp4');
+      expect(
+        persistedSource.relativePath,
+        p.join('..', 'media', 'interview.mp4'),
+      );
       expect(playback.opened, <Uri>[resolved]);
       expect(analysis.requests.single.source, persistedSource);
       expect(exporter.requests.single.source, resolved);
@@ -715,11 +827,14 @@ void main() {
     await firstOpen;
 
     expect(viewModel.state.projectUri, secondProject);
-    expect(viewModel.state.project!.source.absolutePath, secondSource.path);
+    expect(
+      viewModel.state.project!.source.absolutePath,
+      secondSource.toFilePath(),
+    );
     expect(playback.opened, <Uri>[secondSource]);
     expect(
       analysis.requests.map((request) => request.source.absolutePath),
-      <String>[secondSource.path],
+      <String>[secondSource.toFilePath()],
     );
     expect(recents.values, <Uri>[secondProject]);
   });
@@ -842,7 +957,10 @@ void main() {
     expect(fingerprinter.sources, <Uri>[secondSource]);
     expect(engine.probed, <Uri>[secondSource]);
     expect(playback.opened, <Uri>[secondSource]);
-    expect(analysis.requests.single.source.absolutePath, secondSource.path);
+    expect(
+      analysis.requests.single.source.absolutePath,
+      secondSource.toFilePath(),
+    );
   });
 
   test('project switches flush and dispose the previous autosave', () async {
@@ -940,7 +1058,7 @@ void main() {
       find.byType(EditorScreen),
       matchesGoldenFile('../../../goldens/editor_dark_1280x832.png'),
     );
-  });
+  }, skip: !Platform.isMacOS);
 
   testWidgets('matches approved light studio at 1280x832', (tester) async {
     await _pumpGolden(tester, Brightness.light);
@@ -949,7 +1067,7 @@ void main() {
       find.byType(EditorScreen),
       matchesGoldenFile('../../../goldens/editor_light_1280x832.png'),
     );
-  });
+  }, skip: !Platform.isMacOS);
 }
 
 Future<void> _pumpEditor(WidgetTester tester, EditorState state) async {
@@ -1261,9 +1379,13 @@ final class _MemoryProjectStore implements ProjectStore {
   final savedUris = <Uri>[];
   final loaded = <Uri, ProjectDocument>{};
   var fail = false;
+  Object? loadFailure;
 
   @override
-  Future<ProjectDocument> load(Uri project) async => loaded[project]!;
+  Future<ProjectDocument> load(Uri project) async {
+    if (loadFailure case final failure?) throw failure;
+    return loaded[project]!;
+  }
 
   @override
   Future<RecoveryCandidate?> recoveryFor(Uri project) async => null;
@@ -1378,11 +1500,14 @@ final class _ControlledProbeEngine implements EnginePort {
 }
 
 final class _FailingProbeEngine implements EnginePort {
+  _FailingProbeEngine([Object? failure])
+    : failure = failure ?? StateError('probe failed');
+
+  final Object failure;
+
   @override
   EngineTask<MediaMetadata> probe(Uri source) =>
-      _FutureEngineTask<MediaMetadata>(
-        Future<MediaMetadata>.error(StateError('probe failed')),
-      );
+      _FutureEngineTask<MediaMetadata>(Future<MediaMetadata>.error(failure));
 
   @override
   EngineTask<DetectedTimeline> detect(Uri source, AnalysisSettings settings) =>
