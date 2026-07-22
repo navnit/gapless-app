@@ -71,9 +71,7 @@ void main() {
 
     final versionStep = workflow.substring(
       workflow.indexOf('      - name: Resolve and validate release version'),
-      workflow.indexOf(
-        '      - name: Ad hoc sign and package DMG',
-      ),
+      workflow.indexOf('      - name: Ad hoc sign and package DMG'),
     );
     expect(
       versionStep,
@@ -98,7 +96,10 @@ void main() {
       workflow,
       contains('git fetch --no-tags origin main:refs/remotes/origin/main'),
     );
-    expect(workflow, contains(r'main_sha=$(git rev-parse origin/main^{commit})'));
+    expect(
+      workflow,
+      contains(r'main_sha=$(git rev-parse origin/main^{commit})'),
+    );
     expect(
       workflow,
       contains(r'release_sha=$(git rev-parse "$GITHUB_SHA^{commit}")'),
@@ -232,7 +233,10 @@ void main() {
     final building = File('docs/building.md').readAsStringSync();
 
     expect(readme, contains('Gapless 0.1.0'));
-    expect(readme, contains('https://github.com/navnit/gapless/releases/latest'));
+    expect(
+      readme,
+      contains('https://github.com/navnit/gapless/releases/latest'),
+    );
     expect(readme, contains('Windows and Linux remain planned targets'));
 
     for (final phrase in <String>[
@@ -266,18 +270,21 @@ void main() {
     }
   });
 
-  test('publishes the unnotarized security disclosure in the release notes', () {
-    final publish = workflow.substring(workflow.indexOf('  publish:'));
-    for (final phrase in <String>[
-      'body: |',
-      'UNNOTARIZED',
-      'not notarized by Apple',
-      'not been reviewed by Apple',
-      'Open Anyway',
-      'SHA256SUMS',
-    ]) {
-      expect(publish, contains(phrase), reason: phrase);
-    }
-    expect(publish, contains('generate_release_notes: true'));
-  });
+  test(
+    'publishes the unnotarized security disclosure in the release notes',
+    () {
+      final publish = workflow.substring(workflow.indexOf('  publish:'));
+      for (final phrase in <String>[
+        'body: |',
+        'UNNOTARIZED',
+        'not notarized by Apple',
+        'not been reviewed by Apple',
+        'Open Anyway',
+        'SHA256SUMS',
+      ]) {
+        expect(publish, contains(phrase), reason: phrase);
+      }
+      expect(publish, contains('generate_release_notes: true'));
+    },
+  );
 }
