@@ -3,15 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  const macosReleaseSecrets = <String>[
-    'MACOS_P12_BASE64',
-    'MACOS_P12_PASSWORD',
-    'MACOS_KEYCHAIN_PASSWORD',
-    'MACOS_NOTARY_KEY_BASE64',
-    'MACOS_NOTARY_KEY_ID',
-    'MACOS_NOTARY_ISSUER',
-    'MACOS_SIGN_IDENTITY',
-  ];
   late File workflowFile;
   var workflow = '';
 
@@ -64,16 +55,10 @@ void main() {
     expect(validation, greaterThanOrEqualTo(0));
     expect(validation, lessThan(workflow.indexOf('fetch_engine.dart')));
     expect(
-      validation,
-      lessThan(
-        workflow.indexOf('Import Apple signing and notarization credentials'),
-      ),
-    );
-    expect(
       workflow,
       contains(
         r'Gapless-${{ steps.version.outputs.value }}-'
-        r'${{ matrix.target }}.dmg',
+        r'${{ matrix.target }}-UNNOTARIZED.dmg',
       ),
     );
   });
@@ -87,7 +72,7 @@ void main() {
     final versionStep = workflow.substring(
       workflow.indexOf('      - name: Resolve and validate release version'),
       workflow.indexOf(
-        '      - name: Validate signing and notarization secrets',
+        '      - name: Ad hoc sign and package DMG',
       ),
     );
     expect(
@@ -100,25 +85,20 @@ void main() {
     );
   });
 
-  test('signs only main dispatches or tags at the fetched main commit', () {
+  test('builds only main dispatches or tags at the fetched main commit', () {
     final refValidation = workflow.indexOf(
       '      - name: Require reviewed main revision',
     );
-    final secretValidation = workflow.indexOf(
-      '      - name: Validate signing and notarization secrets',
-    );
+    final flutterSetup = workflow.indexOf('subosito/flutter-action@');
 
     expect(refValidation, greaterThanOrEqualTo(0));
-    expect(refValidation, lessThan(secretValidation));
+    expect(refValidation, lessThan(flutterSetup));
     expect(workflow, contains(r'[ "$GITHUB_REF" = refs/heads/main ]'));
     expect(
       workflow,
       contains('git fetch --no-tags origin main:refs/remotes/origin/main'),
     );
-    expect(
-      workflow,
-      contains(r'main_sha=$(git rev-parse origin/main^{commit})'),
-    );
+    expect(workflow, contains(r'main_sha=$(git rev-parse origin/main^{commit})'));
     expect(
       workflow,
       contains(r'release_sha=$(git rev-parse "$GITHUB_SHA^{commit}")'),
@@ -126,7 +106,7 @@ void main() {
     expect(workflow, contains(r'[ "$release_sha" = "$main_sha" ]'));
   });
 
-  test('protects every credential-bearing build with macos-release', () {
+  test('gates every build behind the macos-release approval environment', () {
     final buildHeader = workflow.substring(
       workflow.indexOf('  build:'),
       workflow.indexOf('    steps:'),
@@ -140,26 +120,35 @@ void main() {
     );
   });
 
-  test('requires installed-artifact proof before upload', () {
+  test('proves an unsigned, credential-free installed-artifact path', () {
     for (final required in <String>[
-      ...macosReleaseSecrets,
-      'notarytool store-credentials',
       'package_dmg.sh',
-      'spctl --assess --type execute',
       '--smoke-test',
       'verify_bundle.dart',
       'integration_test/editor_workflow_test.dart',
       'integration_test/recovery_workflow_test.dart',
       'actions/upload-artifact',
+      '-UNNOTARIZED.dmg',
     ]) {
       expect(workflow, contains(required), reason: required);
+    }
+    for (final forbidden in <String>[
+      'MACOS_',
+      'secrets.',
+      'notarytool',
+      'stapler',
+      'spctl --assess',
+      'spctl --master-disable',
+      'xattr',
+    ]) {
+      expect(workflow, isNot(contains(forbidden)), reason: forbidden);
     }
   });
 
   test('generates and verifies each public SBOM from the final signed app', () {
     final package = workflow.indexOf('packaging/macos/package_dmg.sh');
     final finalSbom = workflow.indexOf(
-      '      - name: Generate and verify final signed-app SBOM',
+      '      - name: Generate and verify final app SBOM',
     );
     final smoke = workflow.indexOf(
       '      - name: Smoke test installed macOS DMG',
@@ -238,63 +227,57 @@ void main() {
     expect(publish, contains('overwrite_files: false'));
   });
 
-  test('documents the public macOS-only 0.1.0 download', () {
+  test('documents the public unnotarized macOS 0.1.0 download', () {
     final readme = File('README.md').readAsStringSync();
     final building = File('docs/building.md').readAsStringSync();
 
     expect(readme, contains('Gapless 0.1.0'));
-    expect(
-      readme,
-      contains('https://github.com/navnit/gapless/releases/latest'),
-    );
+    expect(readme, contains('https://github.com/navnit/gapless/releases/latest'));
     expect(readme, contains('Windows and Linux remain planned targets'));
-    expect(building, contains('Ubuntu 24.04/glibc 2.39 baseline'));
-    expect(building, contains('v0.1.0'));
-    expect(building, contains('macos-release'));
-    expect(building, contains('first public release target'));
-    expect(
-      building,
-      contains(
-        'Public downloads become available only after the protected tag '
-        'workflow succeeds and approval completes.',
-      ),
-    );
-    expect(
-      building,
-      contains('https://github.com/navnit/gapless/releases/latest'),
-    );
-    for (final secret in macosReleaseSecrets) {
-      expect(building, contains(secret), reason: secret);
+
+    for (final phrase in <String>[
+      'first public release target',
+      'Ubuntu 24.04/glibc 2.39 baseline',
+      'v0.1.0',
+      'macos-release',
+      'ad hoc',
+      'UNNOTARIZED',
+      'not notarized',
+      'Open Anyway',
+      'brew install --cask navnit/gapless/gapless',
+      'Public downloads become available only after the protected tag '
+          'workflow succeeds and approval completes.',
+      'https://github.com/navnit/gapless/releases/latest',
+      'protected `main`',
+      '`v*` tag ruleset',
+      'blocks tag updates and deletions',
+      'Require at least one reviewer',
+      'enable `Prevent self-review`',
+    ]) {
+      expect(building, contains(phrase), reason: phrase);
     }
-    expect(building, contains('macos-release environment secrets'));
-    expect(building, isNot(contains('requires these repository secrets')));
-    expect(building, contains('protected `main`'));
-    expect(building, contains('`v*` tag ruleset'));
-    expect(building, contains('blocks tag updates and deletions'));
+    for (final forbidden in <String>[
+      'MACOS_P12_BASE64',
+      'MACOS_SIGN_IDENTITY',
+      'notarytool',
+      'macos-release environment secrets',
+    ]) {
+      expect(building, isNot(contains(forbidden)), reason: forbidden);
+    }
   });
 
-  test('documents mandatory protected-environment deployment rules', () {
-    final building = File('docs/building.md').readAsStringSync();
-
-    expect(building, contains('Deployment branches and tags'));
-    expect(building, contains('Selected branches and tags'));
-    expect(building, contains('only `main` and `v0.1.0`'));
-    expect(building, contains('Require at least one reviewer'));
-    expect(building, contains('enable `Prevent self-review`'));
-  });
-
-  test('documents approval before credential-bearing builds and signing', () {
-    final building = File('docs/building.md').readAsStringSync();
-
-    expect(
-      RegExp(
-        r'approval happens before\s+credential-bearing matrix builds and signing',
-      ).hasMatch(building),
-      isTrue,
-    );
-    expect(
-      building,
-      contains('Publication remains protected and approval-gated.'),
-    );
+  test('publishes the unnotarized security disclosure in the release notes', () {
+    final publish = workflow.substring(workflow.indexOf('  publish:'));
+    for (final phrase in <String>[
+      'body: |',
+      'UNNOTARIZED',
+      'not notarized by Apple',
+      'not been reviewed by Apple',
+      'Open Anyway',
+      'SHA256SUMS',
+    ]) {
+      expect(publish, contains(phrase), reason: phrase);
+    }
+    expect(publish, contains('generate_release_notes: true'));
   });
 }
