@@ -13,6 +13,12 @@ are published on the [latest GitHub Release](https://github.com/navnit/gapless/r
 Windows and Linux remain planned targets and continue to run in verification
 CI; they are not downloadable 0.1.0 products.
 
+On launch, Gapless checks GitHub for a newer release at most once per day and
+shows a banner if one is available; "Check for Updates…" in the app menu runs
+the same check on demand. The check is a single unauthenticated HTTPS request
+to `api.github.com`. v1 has no in-app switch to turn this off; a settings
+toggle to disable it is planned.
+
 The development targets are:
 
 - macOS 12 or later on Apple silicon and Intel;

@@ -23,7 +23,9 @@ class UpdateDialog extends StatelessWidget {
   Future<void> _open(String url) async => (openUrl ?? openExternalUrl)(url);
 
   Future<void> _copy(String text) async =>
-      (copyText ?? (value) => Clipboard.setData(ClipboardData(text: value)))(text);
+      (copyText ?? (value) => Clipboard.setData(ClipboardData(text: value)))(
+        text,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +39,10 @@ class UpdateDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('You have ${status.current}.', style: Theme.of(context).textTheme.bodySmall),
+            Text(
+              'You have ${status.current}.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 12),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),
@@ -45,27 +50,39 @@ class UpdateDialog extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             if (isBrew)
-              Row(children: [
-                Expanded(child: SelectableText(kBrewUpgradeCommand)),
-                TextButton(onPressed: () => _copy(kBrewUpgradeCommand), child: const Text('Copy')),
-              ])
+              Row(
+                children: [
+                  Expanded(child: SelectableText(kBrewUpgradeCommand)),
+                  TextButton(
+                    onPressed: () => _copy(kBrewUpgradeCommand),
+                    child: const Text('Copy'),
+                  ),
+                ],
+              )
             else
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                FilledButton(
-                  onPressed: () => _open(release.dmgAssetUrl ?? release.htmlUrl),
-                  child: const Text('Download'),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Drag the new Gapless into Applications and choose Replace.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ]),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  FilledButton(
+                    onPressed: () =>
+                        _open(release.dmgAssetUrl ?? release.htmlUrl),
+                    child: const Text('Download'),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Drag the new Gapless into Applications and choose Replace.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
           ],
         ),
       ),
       actions: [
-        TextButton(onPressed: () => _open(release.htmlUrl), child: const Text('View release')),
+        TextButton(
+          onPressed: () => _open(release.htmlUrl),
+          child: const Text('View release'),
+        ),
         TextButton(onPressed: onSkip, child: const Text('Skip this version')),
         TextButton(onPressed: onClose, child: const Text('Close')),
       ],

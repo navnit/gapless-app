@@ -64,12 +64,17 @@ final class UpdateCoordinator {
     await preferences.save(prefs.copyWith(autoCheckEnabled: enabled));
   }
 
-  Future<bool> autoCheckEnabled() async => (await preferences.load()).autoCheckEnabled;
+  Future<bool> autoCheckEnabled() async =>
+      (await preferences.load()).autoCheckEnabled;
 
   Future<UpdateStatus> _check() async {
     final release = await checker.fetchLatest();
     if (!release.version.isNewerThan(currentVersion)) return const UpToDate();
     final channel = await detector.detect();
-    return UpdateAvailable(release: release, channel: channel, current: currentVersion);
+    return UpdateAvailable(
+      release: release,
+      channel: channel,
+      current: currentVersion,
+    );
   }
 }

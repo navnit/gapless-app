@@ -13,12 +13,11 @@ final class UpdatePreferencesData {
     bool? autoCheckEnabled,
     String? skippedVersion,
     DateTime? lastCheckedAt,
-  }) =>
-      UpdatePreferencesData(
-        autoCheckEnabled: autoCheckEnabled ?? this.autoCheckEnabled,
-        skippedVersion: skippedVersion ?? this.skippedVersion,
-        lastCheckedAt: lastCheckedAt ?? this.lastCheckedAt,
-      );
+  }) => UpdatePreferencesData(
+    autoCheckEnabled: autoCheckEnabled ?? this.autoCheckEnabled,
+    skippedVersion: skippedVersion ?? this.skippedVersion,
+    lastCheckedAt: lastCheckedAt ?? this.lastCheckedAt,
+  );
 }
 
 abstract interface class UpdatePreferencesPort {

@@ -21,7 +21,13 @@ final class CaskroomChannelDetector implements ChannelDetectorPort {
       }
       for (final prefix in caskroomPrefixes) {
         final receipt = File(
-          p.join(prefix, 'Caskroom', 'gapless', '.metadata', 'INSTALL_RECEIPT.json'),
+          p.join(
+            prefix,
+            'Caskroom',
+            'gapless',
+            '.metadata',
+            'INSTALL_RECEIPT.json',
+          ),
         );
         final directory = Directory(p.join(prefix, 'Caskroom', 'gapless'));
         if (await receipt.exists() || await directory.exists()) {

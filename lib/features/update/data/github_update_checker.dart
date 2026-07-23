@@ -13,8 +13,11 @@ final class GithubUpdateChecker implements UpdateCheckerPort {
     Uri? endpoint,
     this.timeout = const Duration(seconds: 5),
     this.notesLimit = 20000,
-  }) : endpoint = endpoint ??
-            Uri.parse('https://api.github.com/repos/navnit/gapless-app/releases/latest');
+  }) : endpoint =
+           endpoint ??
+           Uri.parse(
+             'https://api.github.com/repos/navnit/gapless-app/releases/latest',
+           );
 
   final http.Client client;
   final String archToken;
@@ -27,7 +30,10 @@ final class GithubUpdateChecker implements UpdateCheckerPort {
     final http.Response response;
     try {
       response = await client
-          .get(endpoint, headers: const {'Accept': 'application/vnd.github+json'})
+          .get(
+            endpoint,
+            headers: const {'Accept': 'application/vnd.github+json'},
+          )
           .timeout(timeout);
     } on Object {
       throw const UpdateCheckException(CheckFailureReason.network);
@@ -48,7 +54,9 @@ final class GithubUpdateChecker implements UpdateCheckerPort {
         throw const UpdateCheckException(CheckFailureReason.network);
       }
       final notes = (json['body'] as String?) ?? '';
-      final capped = notes.length > notesLimit ? notes.substring(0, notesLimit) : notes;
+      final capped = notes.length > notesLimit
+          ? notes.substring(0, notesLimit)
+          : notes;
       final assets = (json['assets'] as List<dynamic>?) ?? const <dynamic>[];
       String? dmg;
       for (final entry in assets) {
@@ -59,7 +67,12 @@ final class GithubUpdateChecker implements UpdateCheckerPort {
           break;
         }
       }
-      return ReleaseInfo(version: version, notes: capped, htmlUrl: htmlUrl, dmgAssetUrl: dmg);
+      return ReleaseInfo(
+        version: version,
+        notes: capped,
+        htmlUrl: htmlUrl,
+        dmgAssetUrl: dmg,
+      );
     } on UpdateCheckException {
       rethrow;
     } on Object {

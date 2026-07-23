@@ -26,7 +26,10 @@ final class AppVersion implements Comparable<AppVersion> {
 
   @override
   bool operator ==(Object other) =>
-      other is AppVersion && other.major == major && other.minor == minor && other.patch == patch;
+      other is AppVersion &&
+      other.major == major &&
+      other.minor == minor &&
+      other.patch == patch;
 
   @override
   int get hashCode => Object.hash(major, minor, patch);
