@@ -167,5 +167,5 @@ jobs:
 
             Verify your download against `SHA256SUMS`. Build instructions
             (`building.md`), third-party notices, and the source offer are attached
-            to this release; source code is at https://github.com/navnit/gapless.
+            to this release; source code is at https://github.com/navnit/gapless-app.
           files: artifacts/*

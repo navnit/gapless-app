@@ -235,7 +235,7 @@ void main() {
     expect(readme, contains('Gapless 0.1.0'));
     expect(
       readme,
-      contains('https://github.com/navnit/gapless/releases/latest'),
+      contains('https://github.com/navnit/gapless-app/releases/latest'),
     );
     expect(readme, contains('Windows and Linux remain planned targets'));
 
@@ -251,7 +251,7 @@ void main() {
       'brew install --cask navnit/gapless/gapless',
       'Public downloads become available only after the protected tag '
           'workflow succeeds and approval completes.',
-      'https://github.com/navnit/gapless/releases/latest',
+      'https://github.com/navnit/gapless-app/releases/latest',
       'protected `main`',
       '`v*` tag ruleset',
       'blocks tag updates and deletions',

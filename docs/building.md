@@ -4,7 +4,7 @@ Gapless 0.1.0 is the first public release target, for macOS 12+ Apple Silicon
 and Intel DMGs. The 0.1.0 build is ad hoc signed but is **not** signed with an
 Apple Developer ID and is **not notarized** by Apple, so its artifacts are named
 with an explicit `UNNOTARIZED` marker. Public downloads become available only after the protected tag workflow succeeds and approval completes.
-After that success, download assets from the [latest GitHub Release](https://github.com/navnit/gapless/releases/latest).
+After that success, download assets from the [latest GitHub Release](https://github.com/navnit/gapless-app/releases/latest).
 Windows 10+ x64 and Linux x64 remain planned targets; the Linux target uses an
 Ubuntu 24.04/glibc 2.39 baseline.
 

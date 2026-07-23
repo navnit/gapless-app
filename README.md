@@ -9,7 +9,7 @@ suggested cuts, and export a tighter MP4.
 
 Gapless 0.1.0 is the first public release target for macOS 12 or later. After
 the protected release workflow succeeds, signed Apple Silicon and Intel DMGs
-are published on the [latest GitHub Release](https://github.com/navnit/gapless/releases/latest).
+are published on the [latest GitHub Release](https://github.com/navnit/gapless-app/releases/latest).
 Windows and Linux remain planned targets and continue to run in verification
 CI; they are not downloadable 0.1.0 products.
 
