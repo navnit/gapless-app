@@ -1202,6 +1202,7 @@ final class EditorViewModel extends ChangeNotifier {
           _state.copyWith(
             phase: EditorPhase.analyzing,
             message: _progressMessage(progress),
+            clearFailure: true,
           ),
         );
       case AnalysisReady(:final timeline, :final levels):
@@ -1230,6 +1231,7 @@ final class EditorViewModel extends ChangeNotifier {
             project: updated,
             levels: levels,
             timeline: effective,
+            clearFailure: true,
           ),
         );
         final timelineChanged = runtime?.onTimelineChanged;

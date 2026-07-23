@@ -259,6 +259,42 @@ void main() {
     },
   );
 
+  test('records an engine failure then clears it when analysis re-runs', () async {
+    final analysis = _FakeAnalysis();
+    final store = _MemoryProjectStore();
+    final viewModel = EditorViewModel(
+      initialState: _readyState(),
+      runtime: _runtime(analysis: analysis, store: store),
+    );
+    addTearDown(viewModel.dispose);
+
+    await viewModel.setThresholdDb(-18);
+    analysis.emitFor(
+      analysis.requests.last,
+      AnalysisFailed(
+        EngineContractFailure(
+          operation: 'detect',
+          reason: EngineContractReason.invalidTimeline,
+          diagnostics: const <String>['boundary drift'],
+        ),
+        null,
+      ),
+    );
+
+    expect(viewModel.state.failure, isA<EngineContractFailure>());
+
+    // A fresh run must drop the stale failure so "Copy diagnostics" cannot
+    // linger beside a live progress spinner.
+    await viewModel.setThresholdDb(-17);
+    analysis.emitFor(
+      analysis.requests.last,
+      AnalysisRunning(null, EngineProgress(stage: EngineStage.analyzing)),
+    );
+
+    expect(viewModel.state.failure, isNull);
+    expect(viewModel.state.phase, EditorPhase.analyzing);
+  });
+
   testWidgets(
     'threshold drag previews locally and requests analysis only on release',
     (tester) async {
