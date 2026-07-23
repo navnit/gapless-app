@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:gapless/core/errors/failure_presenter.dart';
 import 'package:gapless/features/editor/presentation/editor_view_model.dart';
 import 'package:gapless/features/editor/presentation/widgets/settings_sidebar.dart';
 import 'package:gapless/features/editor/presentation/widgets/status_bar.dart';
@@ -179,6 +180,11 @@ final class EditorScreen extends StatelessWidget {
                                       controller: videoController,
                                       onTogglePlayback: () =>
                                           unawaited(viewModel.togglePlayback()),
+                                      onCopyDiagnostics: _canCopyDiagnostics(state)
+                                          ? () => unawaited(
+                                              viewModel.copyDiagnostics(),
+                                            )
+                                          : null,
                                     ),
                                   ),
                                 ),
@@ -290,6 +296,13 @@ bool _isEditingText() {
   if (context == null) return false;
   return context.widget is EditableText ||
       context.findAncestorWidgetOfExactType<EditableText>() != null;
+}
+
+bool _canCopyDiagnostics(EditorState state) {
+  final failure = state.failure;
+  return failure != null &&
+      FailurePresenter.present(failure).secondaryAction ==
+          FailureAction.copyDiagnostics;
 }
 
 final class _EmptyWorkspace extends StatelessWidget {

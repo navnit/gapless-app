@@ -86,6 +86,64 @@ void main() {
     expect(find.textContaining('Instance of'), findsNothing);
   });
 
+  testWidgets('offers Copy diagnostics for an engine failure', (tester) async {
+    final captured = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          captured.add((call.arguments as Map<Object?, Object?>)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    final ready = _readyState();
+    final failing =
+        EditorState.analyzing(
+          project: ready.project!,
+          projectUri: ready.projectUri!,
+          metadata: ready.metadata!,
+          message:
+              'Editing engine could not finish. Your project is safe. '
+              'Try again or copy diagnostics for more detail.',
+        ).copyWith(
+          failure: EngineContractFailure(
+            operation: 'detect',
+            reason: EngineContractReason.invalidTimeline,
+            diagnostics: const <String>['boundary drift'],
+          ),
+        );
+
+    await _pumpEditor(tester, failing);
+
+    expect(find.text('Copy diagnostics'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('failure.copyDiagnostics')),
+    );
+    await tester.pump();
+
+    expect(captured, hasLength(1));
+    expect(captured.single, contains('Gapless diagnostics'));
+    expect(captured.single, contains('EngineContractFailure'));
+  });
+
+  testWidgets('hides Copy diagnostics when there is no failure', (tester) async {
+    await _pumpEditor(
+      tester,
+      const EditorState(phase: EditorPhase.empty, message: 'Just a status.'),
+    );
+
+    expect(find.text('Copy diagnostics'), findsNothing);
+  });
+
   testWidgets('shows analysis progress without leaving the studio', (
     tester,
   ) async {

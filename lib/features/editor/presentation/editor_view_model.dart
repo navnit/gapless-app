@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:gapless/core/errors/app_failure.dart';
 import 'package:gapless/core/errors/failure_presenter.dart';
 import 'package:gapless/core/time/source_time_range.dart';
@@ -9,6 +10,7 @@ import 'package:gapless/features/editor/domain/analysis_settings.dart';
 import 'package:gapless/features/editor/domain/effective_timeline.dart';
 import 'package:gapless/features/editor/domain/timeline_segment.dart';
 import 'package:gapless/features/editor/presentation/timeline_view_model.dart';
+import 'package:gapless/features/engine/data/auto_editor/auto_editor_locator.dart';
 import 'package:gapless/features/engine/domain/engine_models.dart';
 import 'package:gapless/features/engine/domain/engine_port.dart';
 import 'package:gapless/features/playback/domain/playback_port.dart';
@@ -126,6 +128,7 @@ final class EditorState {
     this.isPlaying = false,
     this.saveStatus = EditorSaveStatus.idle,
     this.message,
+    this.failure,
     this.audioUnavailable = false,
     this.manualOverridesCleared = false,
     this.recentProjects = const <Uri>[],
@@ -184,6 +187,10 @@ final class EditorState {
   final bool isPlaying;
   final EditorSaveStatus saveStatus;
   final String? message;
+
+  /// The failure backing [message], when the message came from an [AppFailure].
+  /// Carries the detail the UI needs to offer "Copy diagnostics".
+  final AppFailure? failure;
   final bool audioUnavailable;
   final bool manualOverridesCleared;
   final List<Uri> recentProjects;
@@ -199,6 +206,8 @@ final class EditorState {
     bool? isPlaying,
     EditorSaveStatus? saveStatus,
     String? message,
+    AppFailure? failure,
+    bool clearFailure = false,
     bool? audioUnavailable,
     bool? manualOverridesCleared,
     List<Uri>? recentProjects,
@@ -213,6 +222,7 @@ final class EditorState {
     isPlaying: isPlaying ?? this.isPlaying,
     saveStatus: saveStatus ?? this.saveStatus,
     message: message ?? this.message,
+    failure: clearFailure ? null : (failure ?? this.failure),
     audioUnavailable: audioUnavailable ?? this.audioUnavailable,
     manualOverridesCleared:
         manualOverridesCleared ?? this.manualOverridesCleared,
@@ -221,8 +231,12 @@ final class EditorState {
 }
 
 final class EditorViewModel extends ChangeNotifier {
-  EditorViewModel({required EditorState initialState, required this.runtime})
-    : _state = initialState {
+  EditorViewModel({
+    required EditorState initialState,
+    required this.runtime,
+    Future<void> Function(String text)? copyToClipboard,
+  }) : _state = initialState {
+    if (copyToClipboard != null) _copyToClipboard = copyToClipboard;
     _attachRuntime();
     unawaited(loadRecentProjects());
   }
@@ -237,6 +251,7 @@ final class EditorViewModel extends ChangeNotifier {
   EditorState get state => _state;
 
   final EditorRuntime? runtime;
+  Future<void> Function(String text) _copyToClipboard = _writeClipboard;
   AutosaveController? _autosave;
   StreamSubscription<EditorAnalysisUpdate>? _analysisSubscription;
   StreamSubscription<int>? _positionSubscription;
@@ -555,7 +570,7 @@ final class EditorViewModel extends ChangeNotifier {
       }
     } on Object catch (error) {
       if (_isOperationCurrent(generation)) {
-        _setState(_state.copyWith(message: _failureMessage(error)));
+        _setState(_failureState(_state, error));
       }
     }
   }
@@ -624,7 +639,7 @@ final class EditorViewModel extends ChangeNotifier {
       );
     } on Object catch (error) {
       if (_isOperationCurrent(generation) && _state.projectUri == projectUri) {
-        _setState(_state.copyWith(message: _failureMessage(error)));
+        _setState(_failureState(_state, error));
       }
     }
   }
@@ -1075,7 +1090,7 @@ final class EditorViewModel extends ChangeNotifier {
 
   void _reportPickerFailure(int attempt, Object error) {
     if (!_isPickerAttemptCurrent(attempt)) return;
-    _setState(_state.copyWith(message: _failureMessage(error)));
+    _setState(_failureState(_state, error));
   }
 
   void _reportOperationFailure(
@@ -1085,7 +1100,7 @@ final class EditorViewModel extends ChangeNotifier {
   }) {
     if (!_isOperationCurrent(generation)) return;
     final current = recoveryState ?? _state;
-    _setState(current.copyWith(message: _failureMessage(error)));
+    _setState(_failureState(current, error));
   }
 
   Future<void> _queueAutosaveDisposal(AutosaveController? autosave) {
@@ -1238,8 +1253,23 @@ final class EditorViewModel extends ChangeNotifier {
         }
         unawaited(_save(updated, generation: request.generation));
       case AnalysisFailed(:final failure):
-        _setState(_state.copyWith(message: _failureMessage(failure)));
+        _setState(_failureState(_state, failure));
     }
+  }
+
+  /// Copies redacted diagnostics for the current [EditorState.failure] to the
+  /// clipboard. No-op when there is no failure to report.
+  Future<void> copyDiagnostics() async {
+    final failure = _state.failure;
+    if (failure == null) return;
+    final text = FailurePresenter.formatDiagnostics(
+      appVersion: _diagnosticsAppVersion,
+      engineVersion: autoEditorPinnedVersion,
+      platform: defaultTargetPlatform.name,
+      stage: _state.phase.name,
+      failure: failure,
+    );
+    await _copyToClipboard(text);
   }
 
   void _setState(EditorState state) {
@@ -1290,6 +1320,17 @@ final class EditorViewModel extends ChangeNotifier {
     }
   }
 }
+
+const _diagnosticsAppVersion = '0.1.1';
+
+Future<void> _writeClipboard(String text) =>
+    Clipboard.setData(ClipboardData(text: text));
+
+EditorState _failureState(EditorState base, Object error) => base.copyWith(
+  message: _failureMessage(error),
+  failure: error is AppFailure ? error : null,
+  clearFailure: error is! AppFailure,
+);
 
 String _failureMessage(Object error) {
   if (error is OperationCancelled) return 'Operation cancelled.';
