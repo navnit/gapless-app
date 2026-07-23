@@ -86,6 +86,68 @@ void main() {
     expect(find.textContaining('Instance of'), findsNothing);
   });
 
+  testWidgets('offers Copy diagnostics for an engine failure', (tester) async {
+    final captured = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          captured.add(
+            (call.arguments as Map<Object?, Object?>)['text'] as String,
+          );
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    final ready = _readyState();
+    final failing =
+        EditorState.analyzing(
+          project: ready.project!,
+          projectUri: ready.projectUri!,
+          metadata: ready.metadata!,
+          message:
+              'Editing engine could not finish. Your project is safe. '
+              'Try again or copy diagnostics for more detail.',
+        ).copyWith(
+          failure: EngineContractFailure(
+            operation: 'detect',
+            reason: EngineContractReason.invalidTimeline,
+            diagnostics: const <String>['boundary drift'],
+          ),
+        );
+
+    await _pumpEditor(tester, failing);
+
+    expect(find.text('Copy diagnostics'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('failure.copyDiagnostics')),
+    );
+    await tester.pump();
+
+    expect(captured, hasLength(1));
+    expect(captured.single, contains('Gapless diagnostics'));
+    expect(captured.single, contains('EngineContractFailure'));
+  });
+
+  testWidgets('hides Copy diagnostics when there is no failure', (
+    tester,
+  ) async {
+    await _pumpEditor(
+      tester,
+      const EditorState(phase: EditorPhase.empty, message: 'Just a status.'),
+    );
+
+    expect(find.text('Copy diagnostics'), findsNothing);
+  });
+
   testWidgets('shows analysis progress without leaving the studio', (
     tester,
   ) async {
@@ -198,6 +260,45 @@ void main() {
       expect(viewModel.state.manualOverridesCleared, isTrue);
       expect(analysis.requests, hasLength(1));
       expect(analysis.requests.single.settings.thresholdDb, -18);
+    },
+  );
+
+  test(
+    'records an engine failure then clears it when analysis re-runs',
+    () async {
+      final analysis = _FakeAnalysis();
+      final store = _MemoryProjectStore();
+      final viewModel = EditorViewModel(
+        initialState: _readyState(),
+        runtime: _runtime(analysis: analysis, store: store),
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.setThresholdDb(-18);
+      analysis.emitFor(
+        analysis.requests.last,
+        AnalysisFailed(
+          EngineContractFailure(
+            operation: 'detect',
+            reason: EngineContractReason.invalidTimeline,
+            diagnostics: const <String>['boundary drift'],
+          ),
+          null,
+        ),
+      );
+
+      expect(viewModel.state.failure, isA<EngineContractFailure>());
+
+      // A fresh run must drop the stale failure so "Copy diagnostics" cannot
+      // linger beside a live progress spinner.
+      await viewModel.setThresholdDb(-17);
+      analysis.emitFor(
+        analysis.requests.last,
+        AnalysisRunning(null, EngineProgress(stage: EngineStage.analyzing)),
+      );
+
+      expect(viewModel.state.failure, isNull);
+      expect(viewModel.state.phase, EditorPhase.analyzing);
     },
   );
 

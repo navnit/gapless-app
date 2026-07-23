@@ -8,12 +8,17 @@ final class VideoPreview extends StatelessWidget {
     required this.state,
     required this.controller,
     required this.onTogglePlayback,
+    this.onCopyDiagnostics,
     super.key,
   });
 
   final EditorState state;
   final VideoController? controller;
   final VoidCallback onTogglePlayback;
+
+  /// When non-null, renders a "Copy diagnostics" action beside the failure
+  /// message so the user can capture the redacted engine diagnostics.
+  final VoidCallback? onCopyDiagnostics;
 
   @override
   Widget build(BuildContext context) {
@@ -116,6 +121,21 @@ final class VideoPreview extends StatelessWidget {
                                 fontSize: 11.5,
                               ),
                             ),
+                            if (onCopyDiagnostics
+                                case final onCopy?) ...<Widget>[
+                              const SizedBox(height: 6),
+                              TextButton.icon(
+                                key: const ValueKey<String>(
+                                  'failure.copyDiagnostics',
+                                ),
+                                onPressed: onCopy,
+                                icon: const Icon(Icons.copy, size: 15),
+                                label: const Text('Copy diagnostics'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                ),
+                              ),
+                            ],
                           ],
                         ],
                       ),
