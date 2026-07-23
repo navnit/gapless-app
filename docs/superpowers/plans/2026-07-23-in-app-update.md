@@ -28,12 +28,14 @@
 - Modify: `pubspec.yaml` (dependencies)
 - Modify: `macos/Runner/DebugProfile.entitlements`
 
-- [ ] **Step 1: Add dependencies.** Under `dependencies:` in `pubspec.yaml`, add (keep alphabetical grouping consistent with neighbors):
+- [ ] **Step 1: Add dependencies.** In `pubspec.yaml`, insert each in its correct alphabetical slot among the existing deps — `http` goes between `file_selector` and `media_kit`; `package_info_plus` goes between `media_kit_libs_video` and `path` (before `path`, not after `path_provider`):
 
 ```yaml
   http: ^1.2.2
-  package_info_plus: ^8.0.0
+  package_info_plus: ^10.0.0
 ```
+
+Version note: `package_info_plus: ^10.0.0` (not `^8`) — `^8` is two majors behind the current plugin and this project is on a recent Flutter (3.44.4); `^10` is the current major. `http: ^1.2.2` resolves to the 1.x line, compatible with the SDK constraint.
 
 - [ ] **Step 2: Resolve.** Run: `flutter pub get` — Expected: succeeds, `http` and `package_info_plus` appear in `pubspec.lock`.
 - [ ] **Step 3: Add the debug network-client entitlement** so the check works under `flutter run` (Release is unsandboxed and needs no change). In `macos/Runner/DebugProfile.entitlements`, inside the top `<dict>`, add:
@@ -962,6 +964,10 @@ final class UpdateCoordinator {
       return status;
     } on UpdateCheckException catch (error) {
       return CheckFailed(error.reason);
+    } on Object {
+      // A non-check failure (e.g. preferences.save) must not throw out of the
+      // manual path into the UI handler; treat as a network-class failure.
+      return const CheckFailed(CheckFailureReason.network);
     }
   }
 
@@ -1328,7 +1334,19 @@ git commit -m "feat: dismissible update-available banner"
 - Produces:
   - `final class AppUpdateServices { final UpdateCoordinator coordinator; }`
   - `AppDependencies.update` (`AppUpdateServices?`), non-null from `production()`, null from `empty()`.
-  - `production()` gains optional injection params: `UpdateCoordinator? updateCoordinator` (bypasses real construction in tests).
+  - `production()` gains optional injection params: `UpdateCoordinator? updateCoordinator` (bypasses real construction in tests) and `Future<String> Function()? loadAppVersion` (bypasses the `package_info_plus` platform channel — see B1 below).
+
+> **B1 — do not break existing tests.** `test/app/gapless_app_test.dart:84` and `:149` are plain `test()` calls (no widget binding) that invoke `AppDependencies.production(...)` without injecting anything. `PackageInfo.fromPlatform()` throws under a plain `test()` (no `ServicesBinding`/plugin). Therefore the default version loader MUST catch and fall back, so those unedited tests stay green:
+>
+> ```dart
+> Future<String> _defaultAppVersion() async {
+>   try {
+>     return (await PackageInfo.fromPlatform()).version;
+>   } on Object {
+>     return '0.0.0';
+>   }
+> }
+> ```
 
 - [ ] **Step 1: Write failing test.**
 
@@ -1345,7 +1363,7 @@ void main() {
 }
 ```
 
-> The `production()` path constructs real `package_info_plus`/filesystem clients; the deep wiring is exercised by the coordinator's own tests. This task's automated check asserts the `empty()` contract and that the code compiles + analyzes; manual verification (Task 14) confirms the live launch check. If `production()` gains an injectable `updateCoordinator` param, add an assertion that passing a fake yields `update != null`.
+> The `production()` path constructs real `package_info_plus`/filesystem clients; the deep wiring is exercised by the coordinator's own tests. This task's automated check asserts the `empty()` contract and that the code compiles + analyzes; manual verification (Task 13, Step 4) confirms the live launch check. If `production()` gains an injectable `updateCoordinator` param, add an assertion that passing a fake yields `update != null`.
 
 - [ ] **Step 2: Run test, verify fails.** Run: `flutter test test/app/app_dependencies_update_test.dart` — Expected: FAIL (`update` getter missing).
 - [ ] **Step 3: Implement `app_update_services.dart`.**
@@ -1362,11 +1380,26 @@ final class AppUpdateServices {
 
 - [ ] **Step 4: Wire into `AppDependencies`.** In `lib/app/app_dependencies.dart`:
   - Add field `final AppUpdateServices? update;` to the class; add `this.update` to the const constructor; set `update = null` in `AppDependencies.empty()`.
-  - Add imports for `package_info_plus`, `dart:ffi` `Abi`, and the update data/application classes.
-  - Add an optional param `UpdateCoordinator? updateCoordinator` to `production()`.
+  - Add these imports (the file already imports `dart:io` and `package:path/path.dart as p`, but **not** `http`):
+
+```dart
+import 'dart:ffi'; // Abi
+import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:gapless/features/update/application/app_update_services.dart';
+import 'package:gapless/features/update/application/update_coordinator.dart';
+import 'package:gapless/features/update/data/caskroom_channel_detector.dart';
+import 'package:gapless/features/update/data/github_update_checker.dart';
+import 'package:gapless/features/update/data/json_update_preferences.dart';
+import 'package:gapless/features/update/domain/app_version.dart';
+```
+
+  - Add the top-level `_defaultAppVersion()` helper from the B1 note above.
+  - Add optional params `UpdateCoordinator? updateCoordinator` and `Future<String> Function()? loadAppVersion` to `production()`.
   - Build the coordinator near the existing `applicationSupport` usage:
 
 ```dart
+final resolveVersion = loadAppVersion ?? _defaultAppVersion;
 final resolvedUpdateCoordinator = updateCoordinator ??
     UpdateCoordinator(
       checker: GithubUpdateChecker(
@@ -1377,15 +1410,15 @@ final resolvedUpdateCoordinator = updateCoordinator ??
       preferences: JsonUpdatePreferences(
         File(p.join(directories.applicationSupport.path, 'update-preferences.json')),
       ),
-      currentVersion: AppVersion.tryParse((await PackageInfo.fromPlatform()).version) ??
-          const AppVersion(0, 0, 0),
+      currentVersion: AppVersion.tryParse(await resolveVersion()) ?? const AppVersion(0, 0, 0),
       now: DateTime.now,
     );
 ```
 
   - Pass `update: AppUpdateServices(coordinator: resolvedUpdateCoordinator)` in the returned `AppDependencies(...)`.
+  - Because `updateCoordinator` is injected only in tests and the default loader catches, the two existing plain-`test()` `production()` calls in `gapless_app_test.dart` need **no** edits — verify they still pass in Step 5.
 
-- [ ] **Step 5: Run test + analyze.** Run: `flutter test test/app/app_dependencies_update_test.dart` then `flutter analyze` — Expected: PASS / no issues.
+- [ ] **Step 5: Run tests + analyze.** Run: `flutter test test/app/app_dependencies_update_test.dart test/app/gapless_app_test.dart` then `flutter analyze` — Expected: all PASS (the existing `gapless_app_test.dart` must stay green, proving the B1 fallback works) / no issues.
 - [ ] **Step 6: Commit.**
 
 ```bash
@@ -1397,58 +1430,156 @@ git commit -m "feat: wire update services into AppDependencies.production"
 
 ### Task 12: GaplessApp integration — menu, banner, launch check
 
+> **Design decisions locked for this task (from Fable review + user):**
+> - **Menu = Option A (`PlatformMenuBar`, pure Dart).** `PlatformMenuBar.setMenus` replaces the **entire** native menu bar (today sourced from `macos/Runner/Base.lproj/MainMenu.xib`). So the menu we declare MUST re-supply the standard macOS menus via `PlatformProvidedMenuItem`, or the user loses About/Hide/Quit/Services and the Window menu. **Known limitation:** Flutter provides no `PlatformProvidedMenuItemType` for Cut/Copy/Paste/Find, so those visible Edit-menu items are dropped (the ⌘C/⌘V shortcuts still work inside text fields). This is an accepted v1 tradeoff.
+> - **No toggle in the menu.** The `Automatically check for updates` control is deferred to a future settings page. The `autoCheckEnabled` preference and `UpdateCoordinator.setAutoCheckEnabled/autoCheckEnabled` stay wired (default on) so that page is a drop-in later. Consequence: v1 auto-checks on launch (throttled to once/day) with no in-app off switch yet.
+> - **Banner = overlay, not a Column.** Per spec, render it in a `Stack` over the top of `EditorScreen` so the editor does not shift down when the async check lands mid-session.
+
 **Files:**
+- Create: `lib/features/update/presentation/update_menu.dart`
 - Modify: `lib/app/gapless_app.dart`
+- Create: `test/features/update/support/fakes.dart` (extracted from Task 7 fakes — DRY)
 - Test: `test/app/gapless_app_update_test.dart`
 
 **Interfaces:**
-- Consumes: `AppUpdateServices`, `UpdateCoordinator`, `UpdateAvailable`, `UpdateStatus`/`UpToDate`/`CheckFailed`, `UpdateBanner`, `UpdateDialog`, `PlatformMenuBar`.
-- Produces: no new public API; `_GaplessAppState` gains update state + handlers.
+- Consumes: `AppUpdateServices`, `UpdateCoordinator`, `UpdateAvailable`, `UpdateStatus`/`UpToDate`/`CheckFailed`, `UpdateBanner`, `UpdateDialog`, `PlatformMenuBar`, `PlatformProvidedMenuItem`.
+- Produces:
+  - `update_menu.dart`: `List<PlatformMenuItem> buildAppMenus({required VoidCallback onCheckForUpdates})` — returns the full replicated menu hierarchy (App menu with provided About/Hide/Quit + a "Check for Updates…" item; a minimal Window menu) so `GaplessApp` wraps `home` in `PlatformMenuBar(menus: buildAppMenus(...))`.
+  - No new public API on `GaplessApp`; `_GaplessAppState` gains `_availableUpdate` state + handlers.
 
-- [ ] **Step 1: Write failing test** (inject a fake coordinator through `AppDependencies` so no network happens; assert a banner renders when a launch update is available):
+- [ ] **Step 1: Extract shared test fakes.** Move `_FakeChecker`/`_FakeDetector`/`_MemoryPrefs` from the Task 7 test into `test/features/update/support/fakes.dart` as public `FakeChecker`/`FakeDetector`/`MemoryPrefs`, and update the Task 7 test to import them. Run: `flutter test test/features/update/application/update_coordinator_test.dart` — Expected: still PASS.
+
+- [ ] **Step 2: Write failing widget test.** Because the replicated menu uses `PlatformProvidedMenuItem`, whose `toChannelRepresentation` throws unless the target platform is macOS, the test MUST override the platform (widget tests default to `TargetPlatform.android`). `SystemChannels.menu` is an `OptionalMethodChannel`, so no handler is needed and nothing hangs.
 
 ```dart
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-// Build an AppDependencies whose update.coordinator returns a fixed UpdateAvailable
-// from checkOnLaunch(). Pump GaplessApp, pumpAndSettle, expect the banner text.
-// (Construct the coordinator from the in-memory fakes used in Task 7.)
-```
+import 'package:gapless/app/app_dependencies.dart';
+import 'package:gapless/app/gapless_app.dart';
+import 'package:gapless/features/update/application/app_update_services.dart';
+import 'package:gapless/features/update/application/update_coordinator.dart';
+import 'package:gapless/features/update/domain/app_version.dart';
+import 'package:gapless/features/update/domain/install_channel.dart';
+import 'package:gapless/features/update/domain/release_info.dart';
+import 'package:gapless/features/update/domain/update_preferences_port.dart';
+import 'package:gapless/features/update/domain/update_status.dart';
+import 'package:gapless/features/update/support/fakes.dart' as fakes; // FakeChecker, FakeDetector, MemoryPrefs
 
-> Concretely: reuse the `_FakeChecker`/`_FakeDetector`/`_MemoryPrefs` from Task 7 (extract them to `test/features/update/support/fakes.dart` in this task and import from both places — DRY), build a real `UpdateCoordinator` returning `0.2.0`, wrap in `AppUpdateServices`, place on `AppDependencies`, then:
+void main() {
+  setUp(() => debugDefaultTargetPlatformOverride = TargetPlatform.macOS);
+  tearDown(() => debugDefaultTargetPlatformOverride = null);
 
-```dart
   testWidgets('shows the update banner after a launch check', (tester) async {
+    final coordinator = UpdateCoordinator(
+      checker: fakes.FakeChecker(ReleaseInfo(
+        version: AppVersion.tryParse('0.2.0')!,
+        notes: '',
+        htmlUrl: 'https://github.com/navnit/gapless-app/releases/tag/v0.2.0',
+      )),
+      detector: fakes.FakeDetector(InstallChannel.homebrew),
+      preferences: fakes.MemoryPrefs(const UpdatePreferencesData()),
+      currentVersion: AppVersion.tryParse('0.1.1')!,
+      now: () => DateTime.fromMillisecondsSinceEpoch(1700000000000),
+    );
+    final deps = AppDependencies(
+      editorViewModelFactory: null, // required param; null → EditorViewModel.empty()
+      update: AppUpdateServices(coordinator: coordinator),
+    );
     await tester.pumpWidget(GaplessApp(dependencies: deps));
     await tester.pumpAndSettle();
     expect(find.textContaining('0.2.0 is available'), findsOneWidget);
   });
+}
 ```
 
-- [ ] **Step 2: Run test, verify fails.** Run: `flutter test test/app/gapless_app_update_test.dart` — Expected: FAIL.
-- [ ] **Step 3: Implement in `_GaplessAppState`.**
-  - Add `UpdateAvailable? _availableUpdate;` and `bool _autoCheckEnabled = true;`.
+> Note: `MemoryPrefs`'s constructor takes an optional initial `UpdatePreferencesData` (default `const UpdatePreferencesData()`); `FakeChecker` takes a `ReleaseInfo` or an `UpdateCheckException`. Keep these signatures when extracting in Step 1.
+
+- [ ] **Step 3: Run test, verify fails.** Run: `flutter test test/app/gapless_app_update_test.dart` — Expected: FAIL (no banner / members missing).
+
+- [ ] **Step 4: Implement `update_menu.dart`** — the replicated menu hierarchy (Option A):
+
+```dart
+import 'package:flutter/material.dart';
+
+List<PlatformMenuItem> buildAppMenus({required VoidCallback onCheckForUpdates}) => [
+      PlatformMenu(
+        label: 'Gapless',
+        menus: [
+          const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.about),
+          PlatformMenuItem(label: 'Check for Updates…', onSelected: onCheckForUpdates),
+          const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.servicesSubmenu),
+          const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.hide),
+          const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.hideOtherApplications),
+          const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.showAllApplications),
+          const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.quit),
+        ],
+      ),
+      const PlatformMenu(
+        label: 'Window',
+        menus: [
+          PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.minimizeWindow),
+          PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.zoomWindow),
+        ],
+      ),
+    ];
+```
+
+> Cut/Copy/Paste have no `PlatformProvidedMenuItemType`; their menu entries are intentionally absent (accepted tradeoff). Keyboard shortcuts still work in text fields.
+
+- [ ] **Step 5: Implement `_GaplessAppState`.**
+  - Add `UpdateAvailable? _availableUpdate;`.
   - In `initState`, if `widget.dependencies.update case final services?`, call `unawaited(_runLaunchCheck(services.coordinator))`:
 
 ```dart
 Future<void> _runLaunchCheck(UpdateCoordinator coordinator) async {
-  _autoCheckEnabled = await coordinator.autoCheckEnabled();
   final result = await coordinator.checkOnLaunch();
   if (!mounted) return;
   setState(() => _availableUpdate = result);
 }
 ```
 
-  - Add handlers: `_openUpdateDialog()` (shows `UpdateDialog` via `showDialog` using `_navigatorKey.currentContext`), `_skipAvailable()` (calls `coordinator.skipVersion(version)` then clears the banner), `_dismissBanner()` (clears `_availableUpdate` only), `_runManualCheck()` (calls `checkManually()` and shows dialog/snackbar per outcome), `_toggleAutoCheck(bool)` (calls `setAutoCheckEnabled` + setState).
-  - Wrap `home:` in a `PlatformMenuBar` adding a menu group with a "Check for Updates…" item (`onSelected: _runManualCheck`) and a checkbox-style "Automatically check for updates" item bound to `_autoCheckEnabled`/`_toggleAutoCheck`. Guard with `if (widget.dependencies.update != null)` so `empty()` builds unchanged.
-  - Render the banner above `EditorScreen`: replace `home: EditorScreen(...)` with a `Column`/overlay where `if (_availableUpdate case final update?) UpdateBanner(status: update, onView: _openUpdateDialog, onSkip: _skipAvailable, onDismiss: _dismissBanner)` sits above `Expanded(child: EditorScreen(...))`.
+  - Add handlers (all guard on `widget.dependencies.update`):
+    - `_runManualCheck()` — `await coordinator.checkManually()`, then switch on the result: `UpdateAvailable` → `_showUpdateDialog(status)`; `UpToDate` → snackbar "Gapless {current} is the latest version."; `CheckFailed(rateLimited)` → snackbar "GitHub rate limit — try again later."; `CheckFailed(network)` → snackbar "Couldn't check for updates. Check your connection and try again." (use `_navigatorKey.currentContext`).
+    - `_showUpdateDialog(UpdateAvailable status)` — `showDialog` with `UpdateDialog(status: status, onSkip: () { unawaited(coordinator.skipVersion(status.release.version.toString())); Navigator.pop(ctx); setState(() => _availableUpdate = null); }, onClose: () => Navigator.pop(ctx))`.
+    - `_dismissBanner()` — `setState(() => _availableUpdate = null)` only (session-only remind-later).
+    - `_skipFromBanner()` — like the dialog's skip: persist the skip and clear the banner.
+  - Build: wrap `home` in the menu bar and overlay the banner. Guard so `empty()` (no `update`) still builds the bare `MaterialApp`:
 
-- [ ] **Step 4: Run test + analyze.** Run: `flutter test test/app/gapless_app_update_test.dart` then `flutter analyze` — Expected: PASS / no issues.
-- [ ] **Step 5: Commit.**
+```dart
+Widget _shell(Widget home) {
+  final withBanner = Stack(children: [
+    Positioned.fill(child: home),
+    if (_availableUpdate case final update?)
+      Positioned(
+        top: 0, left: 0, right: 0,
+        child: SafeArea(
+          child: UpdateBanner(
+            status: update,
+            onView: () => _showUpdateDialog(update),
+            onSkip: _skipFromBanner,
+            onDismiss: _dismissBanner,
+          ),
+        ),
+      ),
+  ]);
+  final services = widget.dependencies.update;
+  if (services == null) return withBanner;
+  return PlatformMenuBar(
+    menus: buildAppMenus(onCheckForUpdates: _runManualCheck),
+    child: withBanner,
+  );
+}
+```
+
+  Then set `home: _shell(EditorScreen(viewModel: _editor, videoController: widget.dependencies.videoController))` in the `MaterialApp`.
+
+- [ ] **Step 6: Run test + analyze.** Run: `flutter test test/app/gapless_app_update_test.dart test/app/gapless_app_test.dart` then `flutter analyze` — Expected: all PASS (existing `gapless_app_test.dart` stays green — `empty()` path unchanged) / no issues.
+- [ ] **Step 7: Commit.**
 
 ```bash
-git add lib/app/gapless_app.dart test/app/gapless_app_update_test.dart test/features/update/support/fakes.dart
-git commit -m "feat: surface update menu, banner, and launch check in GaplessApp"
+git add lib/app/gapless_app.dart lib/features/update/presentation/update_menu.dart test/app/gapless_app_update_test.dart test/features/update/support/fakes.dart test/features/update/application/update_coordinator_test.dart
+git commit -m "feat: surface update menu (Option A), overlay banner, and launch check in GaplessApp"
 ```
 
 ---
@@ -1458,15 +1589,15 @@ git commit -m "feat: surface update menu, banner, and launch check in GaplessApp
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Document the check** in `README.md` (near install/usage): a short paragraph — Gapless checks GitHub for a newer release on launch (at most once per day), shows a banner if one exists, and this can be turned off via the app menu's "Automatically check for updates".
+- [ ] **Step 1: Document the check** in `README.md` (near install/usage): a short paragraph — Gapless checks GitHub for a newer release on launch (at most once per day) and shows a banner if one exists; "Check for Updates…" is also in the app menu. Disclose that v1 has no in-app off switch yet (a settings toggle is planned) and that the check is a single unauthenticated request to `api.github.com`. Do **not** claim a menu toggle exists.
 - [ ] **Step 2: Run the full suite.** Run: `flutter test` — Expected: all pass (existing + new `test/features/update/**`, `test/app/*update*`).
-- [ ] **Step 3: Analyze + format.** Run: `flutter analyze` (Expected: no issues) and `dart format --set-exit-if-changed lib/features/update lib/app/gapless_app.dart` (Expected: already formatted; if it reformats, re-stage).
-- [ ] **Step 4: Manual smoke (macOS).** Run `flutter run -d macos`, confirm no crash and that "Check for Updates…" appears in the app menu and reports a result (against the live GitHub API). Note: requires the Task 0 debug entitlement.
+- [ ] **Step 3: Analyze + format.** Run: `flutter analyze` (Expected: no issues) and `dart format --set-exit-if-changed lib/features/update lib/app/gapless_app.dart lib/app/app_dependencies.dart` (Expected: already formatted; if it reformats, re-stage and re-commit the affected task). Per-task tip: run `dart format` on each new file before its commit so formatting doesn't accumulate to this step.
+- [ ] **Step 4: Manual smoke (macOS).** Run `flutter run -d macos`. Confirm: (a) no crash; (b) the app menu still shows **Quit (⌘Q)**, About, and Hide — i.e. `PlatformMenuBar` did not wipe the standard menus (the B2 regression check); (c) "Check for Updates…" appears in the app menu and reports a result against the live GitHub API. Note: requires the Task 0 debug entitlement.
 - [ ] **Step 5: Commit.**
 
 ```bash
 git add README.md
-git commit -m "docs: describe in-app update check and how to disable it"
+git commit -m "docs: describe in-app update check and its network request"
 ```
 
 ---
@@ -1474,21 +1605,23 @@ git commit -m "docs: describe in-app update check and how to disable it"
 ## Self-Review
 
 **Spec coverage** — each spec section maps to a task:
-- Auto-check on launch + throttle + opt-out → Tasks 6, 7, 12.
-- Manual "Check for Updates…" via native menu → Task 12.
+- Auto-check on launch + throttle → Tasks 6, 7, 12. **Opt-out toggle UI is deferred to a future settings page** (user decision); the `autoCheckEnabled` pref + `setAutoCheckEnabled`/`autoCheckEnabled` coordinator methods are built and default-on (Tasks 3, 6, 7) so the page is a drop-in — but v1 ships with no in-app off switch, disclosed in the README (Task 13).
+- Manual "Check for Updates…" via native menu (Option A `PlatformMenuBar`, replicating standard menus) → Tasks 12 (`update_menu.dart` + `_GaplessAppState`).
 - Channel detection (receipt + directory + fallbacks) → Task 4.
 - Version compare (numeric, fail-safe) → Task 1.
 - GitHub client (arch match, notes cap, 403/429) → Task 5.
 - Preferences (autoCheckEnabled/skippedVersion/lastCheckedAt, atomic store) → Tasks 3, 6.
 - URL safety + brew constant → Task 8.
-- UI states (dialog, banner, menu) → Tasks 9, 10, 12.
-- Silent-launch / reported-manual error handling → Task 7.
+- UI states: dialog → Task 9; overlay banner → Tasks 10, 12; menu → Task 12.
+- Silent-launch / reported-manual error handling (incl. rate-limit vs network messaging) → Tasks 7, 12.
 - Two deps + debug entitlement → Task 0.
 - README disclosure → Task 13.
 
-**Placeholder scan** — no "TBD"/"add error handling" placeholders; every code step is concrete. Task 11 Step 1 and Task 12 Step 1 intentionally describe the test scaffold in prose because they reuse fakes extracted in Task 12 Step 5 / and assert the `empty()` contract; the concrete assertions are given.
+**Fable-review fixes folded in:** B1 (injectable `loadAppVersion` with catching default → existing plain-`test()` `production()` calls stay green, Task 11); B2 (`PlatformMenuBar` replicates the standard menus via `PlatformProvidedMenuItem`, Task 12 Step 4 + Step 4 smoke regression check in Task 13); M1 (toggle removed from the menu — no native-checkbox needed; deferred to settings); M2 (`http` import added, Task 11 Step 4); M3 (`debugDefaultTargetPlatformOverride = TargetPlatform.macOS` in the widget test, Task 12 Step 2); minors (dep versions `^10.0.0`/alphabetization Task 0; `checkManually` broadened catch Task 7; per-task `dart format` Task 13).
 
-**Type consistency** — `UpdateCoordinator` ctor params (`checker`/`detector`/`preferences`/`currentVersion`/`now`/`throttle`), `UpdateAvailable({release, channel, current})`, `CheckFailureReason{rateLimited, network}`, `AppUpdateServices({coordinator})`, `isAllowedUpdateUrl`, `openExternalUrl`, `kBrewUpgradeCommand`, and `AppVersion.tryParse/isNewerThan/toString` are used identically across producing and consuming tasks.
+**Placeholder scan** — no "TBD"/"add error handling" placeholders; every code step is concrete. Task 11 Step 1's test asserts the `empty()` contract (the deep `production()` wiring is covered by the coordinator's own tests + Task 13 manual smoke); Task 12 gives full concrete test + implementation code.
+
+**Type consistency** — `UpdateCoordinator` ctor params (`checker`/`detector`/`preferences`/`currentVersion`/`now`/`throttle`), `UpdateAvailable({release, channel, current})`, `CheckFailureReason{rateLimited, network}`, `AppUpdateServices({coordinator})`, `buildAppMenus({onCheckForUpdates})`, `isAllowedUpdateUrl`, `openExternalUrl`, `kBrewUpgradeCommand`, and `AppVersion.tryParse/isNewerThan/toString` are used identically across producing and consuming tasks. Shared test fakes are `FakeChecker`/`FakeDetector`/`MemoryPrefs` in `test/features/update/support/fakes.dart` (Task 12 Step 1).
 
 ## Execution Handoff
 
