@@ -121,7 +121,8 @@ final class VideoPreview extends StatelessWidget {
                                 fontSize: 11.5,
                               ),
                             ),
-                            if (onCopyDiagnostics case final onCopy?) ...<Widget>[
+                            if (onCopyDiagnostics
+                                case final onCopy?) ...<Widget>[
                               const SizedBox(height: 6),
                               TextButton.icon(
                                 key: const ValueKey<String>(

@@ -180,7 +180,8 @@ final class EditorScreen extends StatelessWidget {
                                       controller: videoController,
                                       onTogglePlayback: () =>
                                           unawaited(viewModel.togglePlayback()),
-                                      onCopyDiagnostics: _canCopyDiagnostics(state)
+                                      onCopyDiagnostics:
+                                          _canCopyDiagnostics(state)
                                           ? () => unawaited(
                                               viewModel.copyDiagnostics(),
                                             )

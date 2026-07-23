@@ -92,7 +92,9 @@ void main() {
       SystemChannels.platform,
       (call) async {
         if (call.method == 'Clipboard.setData') {
-          captured.add((call.arguments as Map<Object?, Object?>)['text'] as String);
+          captured.add(
+            (call.arguments as Map<Object?, Object?>)['text'] as String,
+          );
         }
         return null;
       },
@@ -135,7 +137,9 @@ void main() {
     expect(captured.single, contains('EngineContractFailure'));
   });
 
-  testWidgets('hides Copy diagnostics when there is no failure', (tester) async {
+  testWidgets('hides Copy diagnostics when there is no failure', (
+    tester,
+  ) async {
     await _pumpEditor(
       tester,
       const EditorState(phase: EditorPhase.empty, message: 'Just a status.'),
@@ -259,41 +263,44 @@ void main() {
     },
   );
 
-  test('records an engine failure then clears it when analysis re-runs', () async {
-    final analysis = _FakeAnalysis();
-    final store = _MemoryProjectStore();
-    final viewModel = EditorViewModel(
-      initialState: _readyState(),
-      runtime: _runtime(analysis: analysis, store: store),
-    );
-    addTearDown(viewModel.dispose);
+  test(
+    'records an engine failure then clears it when analysis re-runs',
+    () async {
+      final analysis = _FakeAnalysis();
+      final store = _MemoryProjectStore();
+      final viewModel = EditorViewModel(
+        initialState: _readyState(),
+        runtime: _runtime(analysis: analysis, store: store),
+      );
+      addTearDown(viewModel.dispose);
 
-    await viewModel.setThresholdDb(-18);
-    analysis.emitFor(
-      analysis.requests.last,
-      AnalysisFailed(
-        EngineContractFailure(
-          operation: 'detect',
-          reason: EngineContractReason.invalidTimeline,
-          diagnostics: const <String>['boundary drift'],
+      await viewModel.setThresholdDb(-18);
+      analysis.emitFor(
+        analysis.requests.last,
+        AnalysisFailed(
+          EngineContractFailure(
+            operation: 'detect',
+            reason: EngineContractReason.invalidTimeline,
+            diagnostics: const <String>['boundary drift'],
+          ),
+          null,
         ),
-        null,
-      ),
-    );
+      );
 
-    expect(viewModel.state.failure, isA<EngineContractFailure>());
+      expect(viewModel.state.failure, isA<EngineContractFailure>());
 
-    // A fresh run must drop the stale failure so "Copy diagnostics" cannot
-    // linger beside a live progress spinner.
-    await viewModel.setThresholdDb(-17);
-    analysis.emitFor(
-      analysis.requests.last,
-      AnalysisRunning(null, EngineProgress(stage: EngineStage.analyzing)),
-    );
+      // A fresh run must drop the stale failure so "Copy diagnostics" cannot
+      // linger beside a live progress spinner.
+      await viewModel.setThresholdDb(-17);
+      analysis.emitFor(
+        analysis.requests.last,
+        AnalysisRunning(null, EngineProgress(stage: EngineStage.analyzing)),
+      );
 
-    expect(viewModel.state.failure, isNull);
-    expect(viewModel.state.phase, EditorPhase.analyzing);
-  });
+      expect(viewModel.state.failure, isNull);
+      expect(viewModel.state.phase, EditorPhase.analyzing);
+    },
+  );
 
   testWidgets(
     'threshold drag previews locally and requests analysis only on release',
