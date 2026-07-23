@@ -138,11 +138,20 @@ final class V3Codec {
         sourceCursorTick = clip.end;
       }
 
+      // Each speed clip rounds its source bounds with integer ceil division
+      // (see the clipBounds note above), so the reconstructed source end can
+      // drift past the probed duration by up to one tick per speed clip. Scale
+      // the endpoint tolerance accordingly; a timeline with no speed clips
+      // keeps the original single-tick bound.
+      final speedClipCount = sourceClips
+          .where((clip) => clip.rate.value > 1)
+          .length;
+      final endpointToleranceUs = _checkedInt64(tickUs * (1 + speedClipCount));
       final decodedEndUs = _ticksToUs(sourceCursorTick, timebase);
-      if (decodedEndUs - sourceDurationUs > tickUs) {
+      if (decodedEndUs - sourceDurationUs > endpointToleranceUs) {
         throw _ContractSignal(EngineContractReason.invalidTimeline);
       }
-      _trimEndpointWithinTick(segments, sourceDurationUs, tickUs);
+      _trimEndpointWithinTick(segments, sourceDurationUs, endpointToleranceUs);
       final coveredUs = segments.isEmpty ? 0 : segments.last.range.endUs;
       if (coveredUs < sourceDurationUs) {
         _appendSegment(

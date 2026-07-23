@@ -149,6 +149,34 @@ void main() {
     );
   });
 
+  test('scales the endpoint tolerance by the speed-clip count', () {
+    // Auto-Editor 31.2.0 rounds speed-clip source bounds with integer ceil
+    // division, so each speed clip can push the reconstructed source end past
+    // the probed duration by up to one tick. A single speed clip must therefore
+    // absorb sub-two-tick drift by clamping, not reject it. (timebase 30/1 ->
+    // one tick == 33_333us; the clip ends at 30 ticks == 1_000_000us.)
+    final oneSpeedClip = _minimalV3([
+      (_clip(start: 0, duration: 10, offset: 0)
+        ..['effects'] = <Object>['speed:3.0']),
+    ]);
+
+    final clamped = V3Codec().decodeDetected(
+      jsonEncode(oneSpeedClip),
+      sourceDurationUs: 950_000, // overshoot 50_000us ~= 1.5 ticks
+    );
+    expect(clamped.segments.single.action, SegmentAction.fastForward);
+    expect(clamped.segments.last.range.endUs, 950_000);
+
+    // Drift beyond the scaled tolerance is still a genuine contract violation.
+    expect(
+      () => V3Codec().decodeDetected(
+        jsonEncode(oneSpeedClip),
+        sourceDurationUs: 920_000, // overshoot 80_000us ~= 2.4 ticks
+      ),
+      throwsA(_isInvalidTimeline),
+    );
+  });
+
   test('rejects overlaps, extra layers, and multiple sources structurally', () {
     final overlap = _minimalV3([
       _clip(start: 0, duration: 10, offset: 0),
