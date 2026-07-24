@@ -25,6 +25,21 @@ Packaging-tool versions and download hashes are committed in
 `tool/release/tool_manifest.json`. Release jobs fail rather than using an
 unverified replacement.
 
+## Git hooks
+
+CI (`.github/workflows/verify.yml`) rejects any commit whose Dart is
+unformatted or fails the analyzer. Enable the matching pre-commit hook once per
+clone to catch both locally:
+
+```sh
+git config core.hooksPath tool/hooks
+```
+
+The hook (`tool/hooks/pre-commit`) auto-formats the staged Dart files with
+`dart format`, re-stages them, then runs `flutter analyze` and blocks the
+commit if the analyzer reports problems. Bypass it for a single commit with
+`git commit --no-verify`.
+
 Build release artifacts from a checkout outside iCloud Drive and other
 FileProvider-managed directories. If codesign reports `resource fork, Finder
 information, or similar detritus not allowed`, move the checkout or build
