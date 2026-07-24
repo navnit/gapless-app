@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -21,7 +22,15 @@ import 'package:gapless/features/project/application/autosave_controller.dart';
 import 'package:gapless/features/project/data/project_repository.dart';
 import 'package:gapless/features/project/domain/project_document.dart';
 import 'package:gapless/features/project/domain/source_reference.dart';
+import 'package:gapless/features/update/application/app_update_services.dart';
+import 'package:gapless/features/update/application/update_coordinator.dart';
+import 'package:gapless/features/update/data/caskroom_channel_detector.dart';
+import 'package:gapless/features/update/data/github_update_checker.dart';
+import 'package:gapless/features/update/data/json_update_preferences.dart';
+import 'package:gapless/features/update/domain/app_version.dart';
+import 'package:http/http.dart' as http;
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -70,16 +79,19 @@ final class AppDependencies {
     required this.editorViewModelFactory,
     this.videoController,
     this.exportDialogs,
+    this.update,
   });
 
   const AppDependencies.empty()
     : editorViewModelFactory = null,
       videoController = null,
-      exportDialogs = null;
+      exportDialogs = null,
+      update = null;
 
   final EditorViewModelFactory? editorViewModelFactory;
   final VideoController? videoController;
   final AppExportDialogServices? exportDialogs;
+  final AppUpdateServices? update;
 
   EditorViewModel createEditorViewModel() =>
       editorViewModelFactory?.call() ?? EditorViewModel.empty();
@@ -95,6 +107,8 @@ final class AppDependencies {
     RecentProjectsPort? recents,
     EditorExportPort? exporter,
     AnalysisCacheStore? analysisCache,
+    UpdateCoordinator? updateCoordinator,
+    Future<String> Function()? loadAppVersion,
   }) async {
     final directories = await (loadDirectories ?? _loadAppDirectories)();
     final runner = processRunner ?? IoProcessRunner();
@@ -145,6 +159,30 @@ final class AppDependencies {
     final projectsDirectory = Directory(
       p.join(directories.applicationSupport.path, 'projects'),
     );
+    final resolveVersion = loadAppVersion ?? _defaultAppVersion;
+    final resolvedUpdateCoordinator =
+        updateCoordinator ??
+        UpdateCoordinator(
+          checker: GithubUpdateChecker(
+            client: http.Client(),
+            archToken: Abi.current() == Abi.macosX64 ? 'x64' : 'arm64',
+          ),
+          detector: CaskroomChannelDetector(
+            resolvedExecutable: Platform.resolvedExecutable,
+          ),
+          preferences: JsonUpdatePreferences(
+            File(
+              p.join(
+                directories.applicationSupport.path,
+                'update-preferences.json',
+              ),
+            ),
+          ),
+          currentVersion:
+              AppVersion.tryParse(await resolveVersion()) ??
+              const AppVersion(0, 0, 0),
+          now: DateTime.now,
+        );
     final runtime = EditorRuntime(
       picker: picker ?? const FileSelectorEditorFilePicker(),
       fingerprinter: resolvedFingerprinter,
@@ -183,7 +221,16 @@ final class AppDependencies {
               destinationPicker: const FileSelectorExportDestinationPicker(),
               revealInFolder: const NativeExportRevealInFolder(),
             ),
+      update: AppUpdateServices(coordinator: resolvedUpdateCoordinator),
     );
+  }
+}
+
+Future<String> _defaultAppVersion() async {
+  try {
+    return (await PackageInfo.fromPlatform()).version;
+  } on Object {
+    return '0.0.0';
   }
 }
 
