@@ -5,12 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../tool/release/validate_release_version.dart';
 
 void main() {
-  test('committed pubspec declares Gapless 0.1.1 build 1', () async {
+  test('committed pubspec declares Gapless 0.1.2 build 1', () async {
     final version = ReleaseVersion.parsePubspec(
       await File('pubspec.yaml').readAsString(),
     );
 
-    expect(version.name, '0.1.1');
+    expect(version.name, '0.1.2');
     expect(version.buildNumber, 1);
   });
 
