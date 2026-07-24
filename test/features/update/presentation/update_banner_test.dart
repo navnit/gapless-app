@@ -10,15 +10,26 @@ void main() {
   testWidgets('shows the new version and fires View', (tester) async {
     var viewed = false;
     final status = UpdateAvailable(
-      release: ReleaseInfo(version: AppVersion.tryParse('0.2.0')!, notes: '', htmlUrl: 'https://github.com/x'),
+      release: ReleaseInfo(
+        version: AppVersion.tryParse('0.2.0')!,
+        notes: '',
+        htmlUrl: 'https://github.com/x',
+      ),
       channel: InstallChannel.homebrew,
       current: AppVersion.tryParse('0.1.1')!,
     );
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: UpdateBanner(status: status, onView: () => viewed = true, onSkip: () {}, onDismiss: () {}),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: UpdateBanner(
+            status: status,
+            onView: () => viewed = true,
+            onSkip: () {},
+            onDismiss: () {},
+          ),
+        ),
       ),
-    ));
+    );
     expect(find.textContaining('0.2.0'), findsOneWidget);
     await tester.tap(find.text('View'));
     expect(viewed, isTrue);

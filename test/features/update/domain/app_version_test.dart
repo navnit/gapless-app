@@ -8,9 +8,20 @@ void main() {
   });
 
   test('compares numerically, not lexically', () {
-    expect(AppVersion.tryParse('0.10.0')!.isNewerThan(AppVersion.tryParse('0.9.0')!), isTrue);
-    expect(AppVersion.tryParse('1.0.0')!.isNewerThan(AppVersion.tryParse('0.99.99')!), isTrue);
-    expect(AppVersion.tryParse('0.1.1')!.isNewerThan(AppVersion.tryParse('0.1.1')!), isFalse);
+    expect(
+      AppVersion.tryParse('0.10.0')!.isNewerThan(AppVersion.tryParse('0.9.0')!),
+      isTrue,
+    );
+    expect(
+      AppVersion.tryParse(
+        '1.0.0',
+      )!.isNewerThan(AppVersion.tryParse('0.99.99')!),
+      isTrue,
+    );
+    expect(
+      AppVersion.tryParse('0.1.1')!.isNewerThan(AppVersion.tryParse('0.1.1')!),
+      isFalse,
+    );
   });
 
   test('rejects suffixes, build metadata, and malformed input as null', () {

@@ -22,7 +22,9 @@ void main() {
   });
 
   test('failure reasons are distinct', () {
-    expect(const CheckFailed(CheckFailureReason.rateLimited).reason,
-        isNot(const CheckFailed(CheckFailureReason.network).reason));
+    expect(
+      const CheckFailed(CheckFailureReason.rateLimited).reason,
+      isNot(const CheckFailed(CheckFailureReason.network).reason),
+    );
   });
 }

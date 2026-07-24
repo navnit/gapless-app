@@ -21,18 +21,22 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
       final coordinator = UpdateCoordinator(
-        checker: fakes.FakeChecker(ReleaseInfo(
-          version: AppVersion.tryParse('0.2.0')!,
-          notes: '',
-          htmlUrl: 'https://github.com/navnit/gapless-app/releases/tag/v0.2.0',
-        )),
+        checker: fakes.FakeChecker(
+          ReleaseInfo(
+            version: AppVersion.tryParse('0.2.0')!,
+            notes: '',
+            htmlUrl:
+                'https://github.com/navnit/gapless-app/releases/tag/v0.2.0',
+          ),
+        ),
         detector: fakes.FakeDetector(InstallChannel.homebrew),
         preferences: fakes.MemoryPrefs(const UpdatePreferencesData()),
         currentVersion: AppVersion.tryParse('0.1.1')!,
         now: () => DateTime.fromMillisecondsSinceEpoch(1700000000000),
       );
       final deps = AppDependencies(
-        editorViewModelFactory: null, // required param; null → EditorViewModel.empty()
+        editorViewModelFactory:
+            null, // required param; null → EditorViewModel.empty()
         update: AppUpdateServices(coordinator: coordinator),
       );
       await tester.pumpWidget(GaplessApp(dependencies: deps));

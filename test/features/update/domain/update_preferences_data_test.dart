@@ -11,7 +11,10 @@ void main() {
 
   test('copyWith replaces only named fields', () {
     final base = const UpdatePreferencesData();
-    final updated = base.copyWith(skippedVersion: '0.2.0', autoCheckEnabled: false);
+    final updated = base.copyWith(
+      skippedVersion: '0.2.0',
+      autoCheckEnabled: false,
+    );
     expect(updated.skippedVersion, '0.2.0');
     expect(updated.autoCheckEnabled, isFalse);
     expect(updated.lastCheckedAt, isNull);

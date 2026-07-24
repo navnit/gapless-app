@@ -7,22 +7,22 @@ import 'package:gapless/features/update/domain/update_checker_port.dart';
 import 'package:gapless/features/update/data/github_update_checker.dart';
 
 String _payload() => jsonEncode({
-      'tag_name': 'v0.2.0',
-      'html_url': 'https://github.com/navnit/gapless-app/releases/tag/v0.2.0',
-      'body': 'Release notes',
-      'assets': [
-        {
-          'name': 'Gapless-0.2.0-macos-arm64-UNNOTARIZED.dmg',
-          'browser_download_url':
-              'https://github.com/navnit/gapless-app/releases/download/v0.2.0/Gapless-0.2.0-macos-arm64-UNNOTARIZED.dmg',
-        },
-        {
-          'name': 'Gapless-0.2.0-macos-x64-UNNOTARIZED.dmg',
-          'browser_download_url':
-              'https://github.com/navnit/gapless-app/releases/download/v0.2.0/Gapless-0.2.0-macos-x64-UNNOTARIZED.dmg',
-        },
-      ],
-    });
+  'tag_name': 'v0.2.0',
+  'html_url': 'https://github.com/navnit/gapless-app/releases/tag/v0.2.0',
+  'body': 'Release notes',
+  'assets': [
+    {
+      'name': 'Gapless-0.2.0-macos-arm64-UNNOTARIZED.dmg',
+      'browser_download_url':
+          'https://github.com/navnit/gapless-app/releases/download/v0.2.0/Gapless-0.2.0-macos-arm64-UNNOTARIZED.dmg',
+    },
+    {
+      'name': 'Gapless-0.2.0-macos-x64-UNNOTARIZED.dmg',
+      'browser_download_url':
+          'https://github.com/navnit/gapless-app/releases/download/v0.2.0/Gapless-0.2.0-macos-x64-UNNOTARIZED.dmg',
+    },
+  ],
+});
 
 void main() {
   test('parses latest release and selects arch-matching dmg', () async {
@@ -44,8 +44,13 @@ void main() {
       );
       expect(
         () => checker.fetchLatest(),
-        throwsA(isA<UpdateCheckException>()
-            .having((e) => e.reason, 'reason', CheckFailureReason.rateLimited)),
+        throwsA(
+          isA<UpdateCheckException>().having(
+            (e) => e.reason,
+            'reason',
+            CheckFailureReason.rateLimited,
+          ),
+        ),
       );
     }
   });
@@ -57,17 +62,30 @@ void main() {
     );
     expect(
       () => checker.fetchLatest(),
-      throwsA(isA<UpdateCheckException>()
-          .having((e) => e.reason, 'reason', CheckFailureReason.network)),
+      throwsA(
+        isA<UpdateCheckException>().having(
+          (e) => e.reason,
+          'reason',
+          CheckFailureReason.network,
+        ),
+      ),
     );
   });
 
   test('caps overly long release notes', () async {
     final body = 'x' * 50000;
     final checker = GithubUpdateChecker(
-      client: MockClient((_) async => http.Response(
-          jsonEncode({'tag_name': 'v0.2.0', 'html_url': 'https://github.com/x', 'body': body, 'assets': []}),
-          200)),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'tag_name': 'v0.2.0',
+            'html_url': 'https://github.com/x',
+            'body': body,
+            'assets': [],
+          }),
+          200,
+        ),
+      ),
       archToken: 'arm64',
       notesLimit: 20000,
     );

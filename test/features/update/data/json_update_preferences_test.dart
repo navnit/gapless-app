@@ -20,11 +20,13 @@ void main() {
     final file = File(p.join(dir.path, 'update.json'));
     final store = JsonUpdatePreferences(file);
     final when = DateTime.fromMillisecondsSinceEpoch(1700000000000);
-    await store.save(UpdatePreferencesData(
-      autoCheckEnabled: false,
-      skippedVersion: '0.2.0',
-      lastCheckedAt: when,
-    ));
+    await store.save(
+      UpdatePreferencesData(
+        autoCheckEnabled: false,
+        skippedVersion: '0.2.0',
+        lastCheckedAt: when,
+      ),
+    );
     final loaded = await store.load();
     expect(loaded.autoCheckEnabled, isFalse);
     expect(loaded.skippedVersion, '0.2.0');

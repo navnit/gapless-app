@@ -7,19 +7,27 @@ import 'package:gapless/features/update/domain/update_status.dart';
 import 'package:gapless/features/update/presentation/update_dialog.dart';
 
 UpdateAvailable _status(InstallChannel channel) => UpdateAvailable(
-      release: ReleaseInfo(
-        version: AppVersion.tryParse('0.2.0')!,
-        notes: 'What is new',
-        htmlUrl: 'https://github.com/navnit/gapless-app/releases/tag/v0.2.0',
-        dmgAssetUrl: 'https://github.com/navnit/gapless-app/releases/download/v0.2.0/Gapless-0.2.0-macos-arm64-UNNOTARIZED.dmg',
-      ),
-      channel: channel,
-      current: AppVersion.tryParse('0.1.1')!,
-    );
+  release: ReleaseInfo(
+    version: AppVersion.tryParse('0.2.0')!,
+    notes: 'What is new',
+    htmlUrl: 'https://github.com/navnit/gapless-app/releases/tag/v0.2.0',
+    dmgAssetUrl:
+        'https://github.com/navnit/gapless-app/releases/download/v0.2.0/Gapless-0.2.0-macos-arm64-UNNOTARIZED.dmg',
+  ),
+  channel: channel,
+  current: AppVersion.tryParse('0.1.1')!,
+);
 
-Future<void> _pump(WidgetTester tester, InstallChannel channel) => tester.pumpWidget(
+Future<void> _pump(WidgetTester tester, InstallChannel channel) =>
+    tester.pumpWidget(
       MaterialApp(
-        home: UpdateDialog(status: _status(channel), onSkip: () {}, onClose: () {}, openUrl: (_) async {}, copyText: (_) async {}),
+        home: UpdateDialog(
+          status: _status(channel),
+          onSkip: () {},
+          onClose: () {},
+          openUrl: (_) async {},
+          copyText: (_) async {},
+        ),
       ),
     );
 
