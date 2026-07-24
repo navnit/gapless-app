@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Pre-commit hook mirroring the format + analyze checks in
+# .github/workflows/verify.yml, so those failures are caught locally before CI.
+#
+# Activate once per clone:
+#   git config core.hooksPath tool/hooks
+#
+# Behaviour: auto-formats staged Dart files, re-stages them, then runs
+# `flutter analyze` and blocks the commit if the analyzer reports problems.
+#
+# Caveat: a partially-staged Dart file (staged AND unstaged edits to the same
+# file) has its unstaged edits swept in when it is re-staged after formatting.
+# Commit such files whole, or format them before staging.
+set -euo pipefail
+
+if ! command -v dart >/dev/null 2>&1; then
+  printf 'pre-commit: `dart` is not on PATH; skipping format/analyze.\n' >&2
+  printf 'pre-commit: put the Flutter SDK on your PATH so this hook can run.\n' >&2
+  exit 1
+fi
+
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.dart')
+if [ -z "$files" ]; then
+  exit 0
+fi
+
+count=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
+printf 'pre-commit: formatting %s staged Dart file(s)\n' "$count"
+printf '%s\n' "$files" | xargs dart format
+printf '%s\n' "$files" | xargs git add --
+
+printf 'pre-commit: running flutter analyze\n'
+if ! flutter analyze; then
+  printf 'pre-commit: flutter analyze failed - commit blocked. Fix the issues above.\n' >&2
+  exit 1
+fi
